@@ -29,18 +29,21 @@ jobs:
       image: ${{ matrix.dist }}
 
     steps:
-      - name: Install git and Node.js
+      - name: Install git
         run: |
           apt-get update -qq
-          apt-get install -y -qq git ca-certificates curl
-          # Install Node.js for actions/checkout
-          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-          apt-get install -y -qq nodejs
+          apt-get install -y -qq git ca-certificates
 
       - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        run: |
+          # Clone the repository
+          git config --global --add safe.directory '*'
+          git clone http://gitea.servers.vejen.loc.martinmunk.com:3000/martinmunk/alsa-avr-control.git /tmp/repo
+          # Copy files to workspace
+          cp -r /tmp/repo/* .
+          cp -r /tmp/repo/.git* . 2>/dev/null || true
+          # Checkout the specific commit
+          git checkout ${{ github.sha }}
 
       - name: Install base build dependencies
         run: |
