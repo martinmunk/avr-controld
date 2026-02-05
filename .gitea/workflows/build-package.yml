@@ -117,6 +117,13 @@ jobs:
       - name: Build for Alpine
         run: |
           echo "=== Building for Alpine Linux (musl) (${{ matrix.arch }}) ==="
+
+          # Modify package name to distinguish from Debian-built packages
+          sed -i 's/^Package: martinmunk-alsa-control-avr$/Package: martinmunk-alsa-control-avr-alpine/' debian/control
+
+          echo "Modified debian/control to use alpine package name:"
+          grep "^Package:" debian/control
+
           dpkg-buildpackage -us -uc -b
 
           echo ""
