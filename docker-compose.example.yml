@@ -11,13 +11,13 @@ services:
     devices:
       - /dev/snd:/dev/snd
 
-    # Volume mount the pre-built Alpine plugins from host
+    # Volume mount the Alpine-built plugins from Debian package
     volumes:
-      # Mount ALSA plugins built with build-for-alpine.sh
-      - /opt/alsa-avr-control/lib/alsa-lib:/usr/lib/alsa-lib:ro
+      # Mount ALSA plugins from martinmunk-alsa-control-avr-alpine package
+      - /opt/alsa-avr-control-alpine/lib/alsa-lib:/usr/lib/alsa-lib:ro
 
       # Mount ALSA configuration files
-      - /opt/alsa-avr-control/etc/alsa/conf.d:/etc/alsa/conf.d:ro
+      - /opt/alsa-avr-control-alpine/etc/alsa/conf.d:/etc/alsa/conf.d:ro
 
       # Optional: Mount your custom asound.conf
       # - ./docker-asound.conf:/etc/asound.conf:ro

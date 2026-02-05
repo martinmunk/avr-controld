@@ -121,8 +121,38 @@ jobs:
           # Modify package name to distinguish from Debian-built packages
           sed -i 's/^Package: martinmunk-alsa-control-avr$/Package: martinmunk-alsa-control-avr-alpine/' debian/control
 
-          echo "Modified debian/control to use alpine package name:"
+          # Update package description to clarify install location
+          sed -i '/^Description:/a\ This Alpine-built package installs to /opt/alsa-avr-control-alpine/' debian/control
+
+          echo "Modified debian/control:"
           grep "^Package:" debian/control
+          grep -A 1 "^Description:" debian/control
+
+          # Override CMAKE_INSTALL_PREFIX to install to /opt/alsa-avr-control-alpine
+          # This allows both native and alpine packages to be installed together
+          cat > debian/rules.alpine << 'EOF'
+#!/usr/bin/make -f
+
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/opt/alsa-avr-control-alpine \
+		-DBUILD_TESTS=OFF
+
+override_dh_auto_test:
+	# Skip tests during package build
+
+override_dh_strip:
+	# Keep debug symbols for better diagnostics
+	dh_strip --no-automatic-dbgsym
+EOF
+
+          # Replace debian/rules with Alpine version
+          mv debian/rules.alpine debian/rules
+          chmod +x debian/rules
 
           dpkg-buildpackage -us -uc -b
 
@@ -257,11 +287,16 @@ jobs:
             echo "✅ Successfully published $PACKAGE_NAME $PACKAGE_VERSION"
             echo "   Distribution: ${{ matrix.codename }} (Alpine/musl-built binaries)"
             echo "   Architecture: ${{ matrix.arch }}"
+            echo "   Install location: /opt/alsa-avr-control-alpine/"
             echo ""
             echo "Install on Pi (for volume-mounting to Alpine containers):"
             echo "  echo 'deb $GITEA_URL/${{ github.repository_owner }}/debian alpine main' | sudo tee /etc/apt/sources.list.d/martinmunk-alpine.list"
             echo "  sudo apt update"
             echo "  sudo apt install $PACKAGE_NAME"
+            echo ""
+            echo "Volume mount into Alpine containers:"
+            echo "  -v /opt/alsa-avr-control-alpine/lib/alsa-lib:/usr/lib/alsa-lib:ro"
+            echo "  -v /opt/alsa-avr-control-alpine/etc/alsa/conf.d:/etc/alsa/conf.d:ro"
             echo "========================================="
           else
             echo "❌ Failed to publish package"

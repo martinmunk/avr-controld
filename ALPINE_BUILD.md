@@ -1,6 +1,6 @@
 # Building for Alpine Linux
 
-This guide explains how to build the ALSA AVR control plugins for Alpine Linux (used by shairport-sync container) and mount them into your container.
+This guide explains how to use Alpine-built packages (musl-linked) alongside native Debian packages on your Raspberry Pi.
 
 ## Why Alpine Build?
 
@@ -8,18 +8,18 @@ The shairport-sync Docker image is based on Alpine Linux, which uses **musl libc
 
 ## Quick Start
 
-### 1. Build for Alpine
+### 1. Install Alpine-Built Package from Repository
 
-Run the build script on your Raspberry Pi:
+Add the Alpine repository and install:
 
 ```bash
-./build-for-alpine.sh
+echo 'deb http://gitea.servers.vejen.loc.martinmunk.com:3000/martinmunk/debian alpine main' | \
+  sudo tee /etc/apt/sources.list.d/martinmunk-alpine.list
+sudo apt update
+sudo apt install martinmunk-alsa-control-avr-alpine
 ```
 
-This will:
-- Build the plugins inside an Alpine container (ensuring musl compatibility)
-- Install to `/opt/alsa-avr-control/` on your Pi
-- Auto-detect your architecture (ARM64 or AMD64)
+This installs musl-linked binaries to `/opt/alsa-avr-control-alpine/`
 
 ### 2. Run Container with Volume Mounts
 
@@ -39,8 +39,8 @@ docker run -d \
   --network host \
   --device /dev/snd \
   --cap-add SYS_NICE \
-  -v /opt/alsa-avr-control/lib/alsa-lib:/usr/lib/alsa-lib:ro \
-  -v /opt/alsa-avr-control/etc/alsa/conf.d:/etc/alsa/conf.d:ro \
+  -v /opt/alsa-avr-control-alpine/lib/alsa-lib:/usr/lib/alsa-lib:ro \
+  -v /opt/alsa-avr-control-alpine/etc/alsa/conf.d:/etc/alsa/conf.d:ro \
   mikebrady/shairport-sync:latest
 ```
 
@@ -62,26 +62,32 @@ You should see:
 
 1. **No image rebuild needed** - Update plugins without rebuilding Docker image
 2. **Faster container startup** - No build step in Dockerfile
-3. **Easy updates** - Just rerun `./build-for-alpine.sh` and restart container
-4. **Correct architecture** - Auto-detects ARM64/AMD64
+3. **Easy updates** - Just `apt upgrade` and restart container
+4. **Both packages together** - Native and Alpine packages can coexist
 
-## Alternative: Build Into Image
+## Both Packages on the Same Pi
 
-If you prefer the original approach of building plugins into the Docker image:
+You can install both packages simultaneously:
 
 ```bash
-docker build -f Dockerfile.shairport -t shairport-sync-custom .
+# Native Debian package (glibc) - standard paths
+sudo apt install martinmunk-alsa-control-avr
+
+# Alpine package (musl) - /opt/alsa-avr-control-alpine/
+sudo apt install martinmunk-alsa-control-avr-alpine
 ```
 
-Then run the `shairport-sync-custom` service in docker-compose.
+- **Native package** (`martinmunk-alsa-control-avr`): Use with ALSA on the host
+- **Alpine package** (`martinmunk-alsa-control-avr-alpine`): Volume mount into Alpine containers
 
 ## Updating Plugins
 
-When you update the plugin source code:
+When a new version is released:
 
 ```bash
-# Rebuild for Alpine
-./build-for-alpine.sh
+# Update package from repository
+sudo apt update
+sudo apt upgrade martinmunk-alsa-control-avr-alpine
 
 # Restart container to use new plugins
 docker-compose restart shairport-sync
@@ -89,13 +95,13 @@ docker-compose restart shairport-sync
 
 ## Directory Structure
 
-After running `build-for-alpine.sh`:
+After installing `martinmunk-alsa-control-avr-alpine`:
 
 ```
-/opt/alsa-avr-control/
+/opt/alsa-avr-control-alpine/
 ├── lib/
 │   └── alsa-lib/
-│       ├── libasound_module_ctl_denon.so
+│       ├── libasound_module_ctl_denon.so  (musl-linked)
 │       ├── libasound_module_ctl_nad.so
 │       ├── libasound_module_ctl_opalum.so
 │       └── libasound_module_ctl_cec.so
@@ -108,6 +114,15 @@ After running `build-for-alpine.sh`:
 │           └── 50-cec-control.conf
 └── bin/
     └── avr-power
+```
+
+After installing `martinmunk-alsa-control-avr` (native):
+
+```
+/usr/
+├── lib/alsa-lib/               (glibc-linked)
+├── etc/alsa/conf.d/
+└── bin/avr-power
 ```
 
 ## Troubleshooting
