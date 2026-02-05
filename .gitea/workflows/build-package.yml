@@ -26,7 +26,7 @@ jobs:
             codename: trixie
 
     container:
-      image: ${{ matrix.dist }}
+      image: node:bookworm-slim
 
     steps:
       - name: Install git
@@ -35,24 +35,9 @@ jobs:
           apt-get install -y -qq git ca-certificates
 
       - name: Checkout code
-        run: |
-          echo "=== Current directory contents ==="
-          ls -la || true
-          echo "=== Working directory: $(pwd) ==="
-
-          # Clean workspace
-          rm -rf * .[!.]* 2>/dev/null || true
-
-          # Clone the repository
-          git config --global --add safe.directory '*'
-          git clone http://gitea.servers.vejen.loc.martinmunk.com:3000/martinmunk/alsa-avr-control.git .
-
-          echo "=== After clone ==="
-          ls -la
-
-          # Checkout the specific commit
-          echo "=== Checking out commit ${{ github.sha }} ==="
-          git checkout ${{ github.sha }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install base build dependencies
         run: |
@@ -96,12 +81,6 @@ jobs:
           echo "=== Validating package with lintian ==="
           cd build
           lintian --info --display-info *.deb || true
-
-      - name: Install Node.js for artifact upload
-        run: |
-          # Install Node.js for the upload-artifact action
-          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-          apt-get install -y -qq nodejs
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
