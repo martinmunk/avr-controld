@@ -1,9 +1,7 @@
-name: Build Alpine Packages
+name: Build and Publish Alpine Packages
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'release/*'
   workflow_dispatch:
@@ -12,57 +10,9 @@ env:
   DEBIAN_FRONTEND: noninteractive
 
 jobs:
-  test-alpine:
-    name: Test Alpine Build (${{ matrix.arch }})
-    runs-on: linux_amd64
-    if: "!startsWith(github.ref, 'refs/tags/release/')"
-    strategy:
-      matrix:
-        include:
-          - arch: arm64
-
-    container:
-      image: node:alpine
-
-    steps:
-      - name: Install git
-        run: |
-          apk add --no-cache git
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install build dependencies
-        run: |
-          apk add --no-cache build-base cmake alsa-lib-dev
-
-      - name: Build and test with CMake
-        run: |
-          echo "=== Building and testing for Alpine Linux (musl) (${{ matrix.arch }}) ==="
-
-          mkdir -p build
-          cd build
-          cmake .. \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/opt/alsa-avr-control-alpine \
-            -DBUILD_TESTS=OFF
-          make -j$(nproc)
-
-          echo ""
-          echo "=== Build successful ==="
-          find . -name "*.so" -type f
-
-          # Run tests if available
-          echo ""
-          echo "=== Running tests ==="
-          ctest --output-on-failure || true
-
   build-alpine-binaries:
     name: Build Alpine Binaries (${{ matrix.arch }})
     runs-on: linux_amd64
-    if: startsWith(github.ref, 'refs/tags/release/')
     strategy:
       matrix:
         include:
@@ -115,7 +65,6 @@ jobs:
     name: Package Alpine Build (${{ matrix.arch }})
     needs: build-alpine-binaries
     runs-on: linux_amd64
-    if: startsWith(github.ref, 'refs/tags/release/')
     strategy:
       matrix:
         include:
@@ -199,7 +148,6 @@ jobs:
   publish-alpine:
     name: Publish Alpine to Package Registry
     needs: package-alpine
-    if: startsWith(github.ref, 'refs/tags/release/')
     runs-on: linux_amd64
     strategy:
       matrix:
