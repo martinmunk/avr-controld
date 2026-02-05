@@ -43,10 +43,13 @@ jobs:
       image: ${{ matrix.dist }}
 
     steps:
-      - name: Install git
+      - name: Install git and Node.js
         run: |
           apt-get update -qq
-          apt-get install -y -qq git ca-certificates
+          apt-get install -y -qq git ca-certificates curl
+          # Install Node.js for actions/checkout
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y -qq nodejs
 
       - name: Checkout code
         uses: actions/checkout@v4
