@@ -98,7 +98,7 @@ jobs:
             codename: stable
 
     container:
-      image: alpine:latest
+      image: node:alpine
 
     steps:
       - name: Install git
