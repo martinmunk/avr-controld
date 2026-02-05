@@ -36,12 +36,9 @@ jobs:
 
       - name: Checkout code
         run: |
-          # Clone the repository
+          # Clone the repository directly to current directory
           git config --global --add safe.directory '*'
-          git clone http://gitea.servers.vejen.loc.martinmunk.com:3000/martinmunk/alsa-avr-control.git /tmp/repo
-          # Copy files to workspace
-          cp -r /tmp/repo/* .
-          cp -r /tmp/repo/.git* . 2>/dev/null || true
+          git clone http://gitea.servers.vejen.loc.martinmunk.com:3000/martinmunk/alsa-avr-control.git .
           # Checkout the specific commit
           git checkout ${{ github.sha }}
 
