@@ -1,3 +1,11 @@
+martinmunk-alsa-control-avr (0.1.7) stable; urgency=medium
+
+  * Separate test and package jobs
+  * Add build dependencies for Alpine packaging
+  * Split workflows into separate test and publish files
+
+ -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 00:52:13 +0100
+
 martinmunk-alsa-control-avr (0.1.6) stable; urgency=medium
 
   * Build Alpine packages manually without debhelper
