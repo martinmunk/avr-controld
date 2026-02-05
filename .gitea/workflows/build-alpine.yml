@@ -134,7 +134,7 @@ jobs:
       - name: Install packaging dependencies
         run: |
           apt-get update -qq
-          apt-get install -y -qq dpkg-dev debhelper
+          apt-get install -y -qq dpkg-dev debhelper cmake libasound2-dev build-essential
 
       - name: Download Alpine binaries
         uses: actions/download-artifact@v3
