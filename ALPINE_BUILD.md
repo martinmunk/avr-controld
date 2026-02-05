@@ -13,7 +13,7 @@ The shairport-sync Docker image is based on Alpine Linux, which uses **musl libc
 Add the Alpine repository and install:
 
 ```bash
-echo 'deb http://gitea.servers.vejen.loc.martinmunk.com:3000/martinmunk/debian alpine main' | \
+echo 'deb http://gitea.servers.vejen.loc.martinmunk.com:3000/martinmunk/debian stable main' | \
   sudo tee /etc/apt/sources.list.d/martinmunk-alpine.list
 sudo apt update
 sudo apt install martinmunk-alsa-control-avr-alpine

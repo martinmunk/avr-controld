@@ -95,7 +95,7 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            codename: alpine
+            codename: stable
 
     container:
       image: alpine:latest
@@ -243,7 +243,7 @@ EOF
       matrix:
         include:
           - arch: arm64
-            codename: alpine
+            codename: stable
 
     steps:
       - name: Download artifacts
@@ -276,7 +276,7 @@ EOF
           echo "Architecture: ${{ matrix.arch }}"
           echo "File: $PACKAGE_FILE"
 
-          # Upload to Gitea Debian Package Repository under "alpine" distribution
+          # Upload to Gitea Debian Package Repository under "stable" distribution
           curl -f -H "Authorization: token $GITEA_TOKEN" \
             --upload-file "$PACKAGE_FILE" \
             "$GITEA_URL/api/packages/${{ github.repository_owner }}/debian/pool/${{ matrix.codename }}/main/upload"
@@ -290,7 +290,7 @@ EOF
             echo "   Install location: /opt/alsa-avr-control-alpine/"
             echo ""
             echo "Install on Pi (for volume-mounting to Alpine containers):"
-            echo "  echo 'deb $GITEA_URL/${{ github.repository_owner }}/debian alpine main' | sudo tee /etc/apt/sources.list.d/martinmunk-alpine.list"
+            echo "  echo 'deb $GITEA_URL/${{ github.repository_owner }}/debian stable main' | sudo tee /etc/apt/sources.list.d/martinmunk-alpine.list"
             echo "  sudo apt update"
             echo "  sudo apt install $PACKAGE_NAME"
             echo ""
