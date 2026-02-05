@@ -53,7 +53,7 @@ jobs:
       - name: Install architecture-specific dependencies
         run: |
           if [ "${{ matrix.arch }}" != "amd64" ]; then
-            apt-get install -y -qq libasound2-dev:${{ matrix.arch }}
+            apt-get install -y -qq libasound2-dev:${{ matrix.arch }} libstdc++6:${{ matrix.arch }}
           else
             apt-get install -y -qq libasound2-dev
           fi
@@ -83,7 +83,7 @@ jobs:
           lintian --info --display-info *.deb || true
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: alsa-avr-control-${{ matrix.codename }}-${{ matrix.arch }}
           path: build/*.deb
@@ -103,7 +103,7 @@ jobs:
 
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v3
         with:
           name: alsa-avr-control-${{ matrix.codename }}-${{ matrix.arch }}
           path: packages/
