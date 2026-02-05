@@ -101,7 +101,6 @@ jobs:
         with:
           name: alsa-avr-control-${{ matrix.codename }}-${{ matrix.arch }}
           path: build/*.deb
-          retention-days: 30
 
   publish:
     name: Publish to Package Registry
