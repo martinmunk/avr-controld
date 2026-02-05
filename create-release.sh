@@ -111,7 +111,7 @@ else
 fi
 
 # Show what will happen
-TAG_NAME="${PACKAGE_NAME}/release/${NEW_VERSION}"
+TAG_NAME="release/${NEW_VERSION}"
 echo -e "${YELLOW}Release Summary:${NC}"
 echo -e "  Package:    ${PACKAGE_NAME}"
 echo -e "  Version:    ${GREEN}${CURRENT_VERSION}${NC} → ${GREEN}${NEW_VERSION}${NC}"
