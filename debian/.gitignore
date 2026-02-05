@@ -1,0 +1,6 @@
+# Debhelper generated files
+.debhelper/
+debhelper-build-stamp
+*.substvars
+files
+martinmunk-alsa-avr-pi/

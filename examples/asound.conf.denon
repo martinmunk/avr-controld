@@ -1,0 +1,170 @@
+# ALSA configuration for Denon IP control (separate plugin)
+# Place this in ~/.asoundrc or /etc/asound.conf
+
+# ===== Option 1: Parameterized configuration with defaults (recommended) =====
+# Supports environment variables and easy customization
+ctl.denon {
+    @args [ HOST PORT INPUT LOG_FILE LOG_LEVEL ]
+    @args.HOST {
+        type string
+        default {
+            @func getenv
+            vars [ DENON_HOST ]
+            default "192.168.1.100"
+        }
+    }
+    @args.PORT {
+        type string
+        default {
+            @func getenv
+            vars [ DENON_PORT ]
+            default "23"
+        }
+    }
+    @args.INPUT {
+        type string
+        default {
+            @func getenv
+            vars [ DENON_INPUT ]
+            default ""
+        }
+    }
+    @args.LOG_FILE {
+        type string
+        default {
+            @func getenv
+            vars [ DENON_LOG_FILE ]
+            default "/var/log/alsa-avr/denon.log"
+        }
+    }
+    @args.LOG_LEVEL {
+        type string
+        default {
+            @func getenv
+            vars [ DENON_LOG_LEVEL ]
+            default "INFO"
+        }
+    }
+    type denon
+    host $HOST
+    port $PORT
+    input $INPUT
+    log_file $LOG_FILE
+    log_level $LOG_LEVEL
+}
+
+# Usage examples:
+#   1. Use with environment variables:
+#      DENON_HOST=192.168.1.50 amixer -D denon ...
+#
+#   2. Override host inline (requires ALSA 1.2.4+):
+#      amixer -D "denon:HOST=192.168.1.50" ...
+#
+#   3. Use defaults from config above:
+#      amixer -D denon ...
+
+# ===== Option 2: Fixed configuration =====
+# Simple static configuration
+ctl.denon_fixed {
+    type denon
+    host "192.168.1.100"
+    port "23"
+    input "MPLAY"                         # Optional: auto-switch input
+    log_file "/var/log/alsa-avr/denon.log"  # Optional
+    log_level "INFO"                      # Optional: DEBUG, INFO, WARN, ERROR
+}
+
+# ===== Option 3: Multiple receivers =====
+# Define multiple receivers with different names
+ctl.denon_living_room {
+    type denon
+    host "192.168.1.100"
+    port "23"
+    input "MPLAY"
+}
+
+ctl.denon_bedroom {
+    type denon
+    host "192.168.1.101"
+    port "23"
+    input "DVD"
+}
+
+# Usage:
+#   amixer -D denon_living_room ...
+#   amixer -D denon_bedroom ...
+
+# ===== Option 4: Set as default control =====
+ctl.!default {
+    type denon
+    host "192.168.1.100"
+    port "23"
+}
+
+# ===== PCM device with Denon control =====
+# Audio output with AVR volume control
+pcm.denon_audio {
+    type hw
+    card 0                                # Your audio card
+}
+
+ctl.denon_audio {
+    type denon
+    host "192.168.1.100"
+    port "23"
+}
+
+# ===== Complete asym setup (playback + AVR control) =====
+# For applications like shairport-sync
+pcm.denon_complete {
+    type plug
+    slave.pcm "hw:0"
+}
+
+ctl.denon_complete {
+    type denon
+    host "192.168.1.100"
+    port "23"
+    input "MPLAY"
+}
+
+# ===== OLD SYNTAX (unified plugin - for backwards compatibility) =====
+# ctl.avr {
+#     type avr
+#     backend "denon_ip"
+#     host "192.168.1.100"
+#     port "23"
+# }
+
+# ===== Environment Variable Reference =====
+# Set these before running ALSA commands:
+#   export DENON_HOST=192.168.1.50
+#   export DENON_PORT=23
+#   export DENON_INPUT=MPLAY
+#   export DENON_LOG_FILE=/var/log/alsa-avr/denon.log
+#   export DENON_LOG_LEVEL=DEBUG
+
+# ===== Denon Input Names Reference =====
+# Common input names (use exactly as shown):
+#   PHONO       - Phono input
+#   CD          - CD input
+#   DVD         - DVD input
+#   BD          - Blu-ray input
+#   TV          - TV input
+#   SAT/CBL     - Satellite/Cable input
+#   MPLAY       - Media Player (often HDMI)
+#   GAME        - Game input
+#   HDRADIO     - HD Radio
+#   NET         - Network/Streaming
+#   PANDORA     - Pandora
+#   SIRIUSXM    - SiriusXM
+#   SPOTIFY     - Spotify
+#   FLICKR      - Flickr
+#   FAVORITES   - Favorites
+#   IRADIO      - Internet Radio
+#   SERVER      - Media Server
+#   USB/IPOD    - USB/iPod input
+#   USB         - USB input
+#   IPD         - iPod direct
+#   IRP         - Internet Radio
+#   FVP         - Favorites

@@ -1,0 +1,7 @@
+martinmunk-alsa-control-avr (0.0.1) stable; urgency=medium
+
+  * Initial release
+  * ALSA control plugins for Denon, NAD, Opalum, and CEC backends
+  * avr-power utility for power control
+
+ -- Martin Munk Hansen <martin@martinmunk.dk>  Sun, 02 Feb 2026 23:45:00 +0100

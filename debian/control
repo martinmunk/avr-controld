@@ -1,0 +1,24 @@
+Source: martinmunk-alsa-control-avr
+Section: sound
+Priority: optional
+Maintainer: Martin Munk Hansen <hansen@martinmunk.com>
+Build-Depends: debhelper-compat (= 12),
+ cmake,
+ libasound2-dev
+Standards-Version: 4.6.0
+Homepage: https://github.com/martinmunk/alsa-avr-control
+
+Package: martinmunk-alsa-control-avr
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: ALSA control plugins for AV receivers
+ ALSA external control plugins for controlling AV receivers through
+ various communication backends.
+ .
+ Includes plugins for:
+  - Denon/Marantz IP control (telnet)
+  - NAD serial/ethernet control
+  - Opalum RS232 control
+  - HDMI-CEC control
+ .
+ Also includes avr-power utility for power control via ALSA.

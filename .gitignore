@@ -1,0 +1,41 @@
+# Build directories
+build/
+build-*/
+*-out/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Compiled files
+*.o
+*.so
+*.a
+*.la
+*.lo
+
+# Debian packaging
+debian/.debhelper/
+debian/files
+debian/*.debhelper
+debian/*.log
+debian/*.substvars
+debian/martinmunk-alsa-control-avr/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/

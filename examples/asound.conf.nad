@@ -1,0 +1,139 @@
+# ALSA configuration for NAD Serial control (separate plugin)
+# Place this in ~/.asoundrc or /etc/asound.conf
+
+# ===== Option 1: Parameterized configuration with defaults (recommended) =====
+# Supports environment variables and easy customization
+ctl.nad {
+    @args [ DEVICE LOG_FILE LOG_LEVEL ]
+    @args.DEVICE {
+        type string
+        default {
+            @func getenv
+            vars [ NAD_DEVICE ]
+            default "/dev/ttyUSB0"
+        }
+    }
+    @args.LOG_FILE {
+        type string
+        default {
+            @func getenv
+            vars [ NAD_LOG_FILE ]
+            default "/var/log/alsa-avr/nad.log"
+        }
+    }
+    @args.LOG_LEVEL {
+        type string
+        default {
+            @func getenv
+            vars [ NAD_LOG_LEVEL ]
+            default "INFO"
+        }
+    }
+    type nad
+    device $DEVICE
+    log_file $LOG_FILE
+    log_level $LOG_LEVEL
+}
+
+# Usage examples:
+#   1. Use with environment variables:
+#      NAD_DEVICE=/dev/ttyUSB1 amixer -D nad ...
+#
+#   2. Override device inline (requires ALSA 1.2.4+):
+#      amixer -D "nad:DEVICE=/dev/ttyUSB1" ...
+#
+#   3. Use defaults from config above:
+#      amixer -D nad ...
+
+# ===== Option 2: Fixed configuration =====
+# Simple static configuration
+ctl.nad_fixed {
+    type nad
+    device "/dev/ttyUSB0"
+    log_file "/var/log/alsa-avr/nad.log"  # Optional
+    log_level "INFO"                      # Optional: DEBUG, INFO, WARN, ERROR
+}
+
+# ===== Option 3: Multiple receivers =====
+# Define multiple receivers with different serial ports
+ctl.nad_living_room {
+    type nad
+    device "/dev/ttyUSB0"
+}
+
+ctl.nad_bedroom {
+    type nad
+    device "/dev/ttyUSB1"
+}
+
+# Usage:
+#   amixer -D nad_living_room ...
+#   amixer -D nad_bedroom ...
+
+# ===== Option 4: Set as default control =====
+ctl.!default {
+    type nad
+    device "/dev/ttyUSB0"
+}
+
+# ===== PCM device with NAD control =====
+# Audio output with AVR volume control
+pcm.nad_audio {
+    type hw
+    card 0                                 # Your audio card
+}
+
+ctl.nad_audio {
+    type nad
+    device "/dev/ttyUSB0"
+}
+
+# ===== Complete asym setup (playback + AVR control) =====
+# For applications like shairport-sync
+pcm.nad_complete {
+    type plug
+    slave.pcm "hw:0"
+}
+
+ctl.nad_complete {
+    type nad
+    device "/dev/ttyUSB0"
+}
+
+# ===== OLD SYNTAX (unified plugin - for backwards compatibility) =====
+# ctl.avr {
+#     type avr
+#     backend "nad_serial"
+#     device "/dev/ttyUSB0"
+# }
+
+# ===== Environment Variable Reference =====
+# Set these before running ALSA commands:
+#   export NAD_DEVICE=/dev/ttyUSB0
+#   export NAD_LOG_FILE=/var/log/alsa-avr/nad.log
+#   export NAD_LOG_LEVEL=DEBUG
+
+# ===== NAD Protocol Notes =====
+# - Baud rate: 115200, 8N1, no flow control
+# - Protocol: NAD v2.X ASCII protocol
+# - Volume range: -90 dB to 0 dB
+# - Commands are in format: Prefix.Variable<Op><Value>\r
+# - Example: Main.Volume=-30 sets volume to -30 dB
+# - Query format: Main.Volume? returns current volume
+
+# ===== Serial Port Setup =====
+# Add your user to the dialout group to access serial ports:
+#   sudo usermod -a -G dialout $USER
+#   # Log out and back in for changes to take effect
+#
+# Find your serial device:
+#   ls -la /dev/ttyUSB*
+#   ls -la /dev/ttyACM*
+#
+# Check which device is your NAD receiver:
+#   dmesg | grep tty
+#
+# Test serial connection:
+#   screen /dev/ttyUSB0 115200
+#   # Type: Main.Volume?
+#   # Should see response like: Main.Volume=-30

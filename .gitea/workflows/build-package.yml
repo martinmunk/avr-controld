@@ -1,0 +1,96 @@
+name: Build Debian Package
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'release/*'
+  workflow_dispatch:
+    inputs:
+      skip_publish:
+        description: 'Skip publishing to package registry'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  build-and-publish:
+    name: Build and Publish Package
+    runs-on: linux_arm64
+    container:
+      image: debian:trixie
+    steps:
+      - name: Install git
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          apt-get install -y -qq dpkg-dev debhelper cmake libasound2-dev g++ lintian curl
+
+      - name: Build package
+        run: |
+          echo "=== Building Debian package ==="
+          dpkg-buildpackage -us -uc -b
+
+          echo ""
+          echo "=== Build artifacts ==="
+          ls -lh ../*.deb
+
+          # Move .deb files to a build directory
+          mkdir -p build
+          mv ../*.deb build/
+
+      - name: Validate package with lintian
+        run: |
+          echo "=== Validating package with lintian ==="
+          cd build
+          lintian --info --display-info --display-experimental --pedantic *.deb || true
+
+      - name: Publish to Gitea Package Registry
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITEA_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
+          GITEA_URL: ${{ github.server_url }}
+        run: |
+          # Get package name from debian/control
+          PACKAGE_NAME=$(grep "^Package:" debian/control | head -1 | awk '{print $2}')
+
+          # Find the .deb file
+          PACKAGE_FILE=$(ls build/*.deb | head -1)
+
+          # Extract version from filename
+          PACKAGE_VERSION=$(basename "$PACKAGE_FILE" | grep -o "_[0-9][^_]*" | sed 's/^_//')
+
+          echo "=== Publishing to Gitea Debian Repository ==="
+          echo "Package: $PACKAGE_NAME version $PACKAGE_VERSION"
+          echo "File: $PACKAGE_FILE"
+
+          # Upload to Gitea Debian Package Repository
+          curl -f -H "Authorization: token $GITEA_TOKEN" \
+            --upload-file "$PACKAGE_FILE" \
+            "$GITEA_URL/api/packages/${{ github.repository_owner }}/debian/pool/stable/main/upload"
+
+          if [ $? -eq 0 ]; then
+            echo ""
+            echo "========================================="
+            echo "✅ Successfully published $PACKAGE_NAME version $PACKAGE_VERSION"
+            echo "Repository URL: $GITEA_URL/${{ github.repository_owner }}/debian"
+            echo ""
+            echo "Add to sources.list with:"
+            echo "  deb $GITEA_URL/${{ github.repository_owner }}/debian stable main"
+            echo "========================================="
+          else
+            echo "❌ Failed to publish package"
+            exit 1
+          fi

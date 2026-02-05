@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  # For Denon IP backend (network control)
+  avr-control-ip:
+    image: alsa-avr-control
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: host  # Needed to access AVR on local network
+    command: amixer set 'AVR' 50%
+
+  # For NAD/Opalum UART backend (serial control)
+  avr-control-uart:
+    image: alsa-avr-control
+    build:
+      context: .
+      dockerfile: Dockerfile
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0  # Map serial device
+    command: amixer -D avr set 'AVR' 50%
+
+  # For audio playback + AVR control
+  audio-player:
+    image: alsa-avr-control
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: host
+    devices:
+      - /dev/snd:/dev/snd  # Map audio hardware for playback
+    volumes:
+      - /run/user/1000/pulse:/run/user/1000/pulse  # Optional: PulseAudio socket
+    environment:
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+    command: /bin/bash -c "amixer set 'AVR' 60% && aplay /path/to/audio.wav"
