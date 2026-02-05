@@ -36,10 +36,22 @@ jobs:
 
       - name: Checkout code
         run: |
-          # Clone the repository directly to current directory
+          echo "=== Current directory contents ==="
+          ls -la || true
+          echo "=== Working directory: $(pwd) ==="
+
+          # Clean workspace
+          rm -rf * .[!.]* 2>/dev/null || true
+
+          # Clone the repository
           git config --global --add safe.directory '*'
           git clone http://gitea.servers.vejen.loc.martinmunk.com:3000/martinmunk/alsa-avr-control.git .
+
+          echo "=== After clone ==="
+          ls -la
+
           # Checkout the specific commit
+          echo "=== Checking out commit ${{ github.sha }} ==="
           git checkout ${{ github.sha }}
 
       - name: Install base build dependencies
