@@ -112,58 +112,60 @@ jobs:
 
       - name: Install build and packaging dependencies
         run: |
-          apk add --no-cache build-base cmake alsa-lib-dev dpkg-dev debhelper perl
+          apk add --no-cache build-base cmake alsa-lib-dev dpkg
 
       - name: Build for Alpine
         run: |
           echo "=== Building for Alpine Linux (musl) (${{ matrix.arch }}) ==="
 
-          # Modify package name to distinguish from Debian-built packages
-          sed -i 's/^Package: martinmunk-alsa-control-avr$/Package: martinmunk-alsa-control-avr-alpine/' debian/control
+          # Get version from changelog
+          VERSION=$(head -1 debian/changelog | sed 's/.*(\(.*\)).*/\1/')
+          PACKAGE_NAME="martinmunk-alsa-control-avr-alpine"
 
-          # Update package description to clarify install location
-          sed -i '/^Description:/a\ This Alpine-built package installs to /opt/alsa-avr-control-alpine/' debian/control
+          echo "Building $PACKAGE_NAME version $VERSION"
 
-          echo "Modified debian/control:"
-          grep "^Package:" debian/control
-          grep -A 1 "^Description:" debian/control
+          # Build with cmake
+          mkdir -p build-alpine
+          cd build-alpine
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/opt/alsa-avr-control-alpine \
+            -DBUILD_TESTS=OFF
+          make -j$(nproc)
 
-          # Override CMAKE_INSTALL_PREFIX to install to /opt/alsa-avr-control-alpine
-          # This allows both native and alpine packages to be installed together
-          {
-            echo '#!/usr/bin/make -f'
-            echo ''
-            echo '%:'
-            echo '	dh $@ --buildsystem=cmake'
-            echo ''
-            echo 'override_dh_auto_configure:'
-            echo '	dh_auto_configure -- \'
-            echo '		-DCMAKE_BUILD_TYPE=Release \'
-            echo '		-DCMAKE_INSTALL_PREFIX=/opt/alsa-avr-control-alpine \'
-            echo '		-DBUILD_TESTS=OFF'
-            echo ''
-            echo 'override_dh_auto_test:'
-            echo '	# Skip tests during package build'
-            echo ''
-            echo 'override_dh_strip:'
-            echo '	# Keep debug symbols for better diagnostics'
-            echo '	dh_strip --no-automatic-dbgsym'
-          } > debian/rules.alpine
+          # Create package structure
+          PKGDIR="../pkg-alpine"
+          mkdir -p "$PKGDIR/DEBIAN"
+          mkdir -p "$PKGDIR/opt/alsa-avr-control-alpine"
 
-          # Replace debian/rules with Alpine version
-          mv debian/rules.alpine debian/rules
-          chmod +x debian/rules
+          # Install to package directory
+          DESTDIR="$PKGDIR" make install
 
-          dpkg-buildpackage -us -uc -b
+          # Create DEBIAN/control file
+          cat > "$PKGDIR/DEBIAN/control" << EOF
+          Package: $PACKAGE_NAME
+          Version: $VERSION
+          Section: sound
+          Priority: optional
+          Architecture: $(dpkg --print-architecture)
+          Maintainer: Martin Munk Hansen <hansen@martinmunk.com>
+          Depends: libasound2
+          Description: ALSA control plugins for AV receivers (Alpine/musl build)
+           This Alpine-built package installs to /opt/alsa-avr-control-alpine/
+           .
+           Built with musl libc for compatibility with Alpine Linux containers.
+           Volume mount into containers for use with shairport-sync.
+          EOF
+
+          cd ..
+
+          # Build the .deb package
+          mkdir -p build
+          dpkg-deb --build pkg-alpine "build/${PACKAGE_NAME}_${VERSION}_$(dpkg --print-architecture).deb"
 
           echo ""
           echo "=== Build artifacts ==="
-          ls -lh ../*.deb
-
-          # Move .deb files to build directory
-          mkdir -p build
-          mv ../*.deb build/ 2>/dev/null || true
-          ls -lh build/
+          ls -lh build/*.deb
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v3
