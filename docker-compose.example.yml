@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  shairport-sync:
+    image: mikebrady/shairport-sync:latest
+    container_name: shairport-sync
+    restart: unless-stopped
+    network_mode: host
+
+    # Pass through ALSA devices
+    devices:
+      - /dev/snd:/dev/snd
+
+    # Volume mount the pre-built Alpine plugins from host
+    volumes:
+      # Mount ALSA plugins built with build-for-alpine.sh
+      - /opt/alsa-avr-control/lib/alsa-lib:/usr/lib/alsa-lib:ro
+
+      # Mount ALSA configuration files
+      - /opt/alsa-avr-control/etc/alsa/conf.d:/etc/alsa/conf.d:ro
+
+      # Optional: Mount your custom asound.conf
+      # - ./docker-asound.conf:/etc/asound.conf:ro
+
+      # Optional: Persistent shairport-sync config
+      # - ./shairport-sync.conf:/etc/shairport-sync.conf:ro
+
+    # Additional capabilities for audio
+    cap_add:
+      - SYS_NICE
+
+    environment:
+      # Optional: Set timezone
+      - TZ=Europe/Copenhagen
+
+# Alternative: Build image with plugins from source (original approach)
+# Uncomment this service instead if you want to build plugins into the image
+#  shairport-sync-custom:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile.shairport
+#    container_name: shairport-sync-custom
+#    restart: unless-stopped
+#    network_mode: host
+#    devices:
+#      - /dev/snd:/dev/snd
+#    cap_add:
+#      - SYS_NICE
+#    environment:
+#      - TZ=Europe/Copenhagen
