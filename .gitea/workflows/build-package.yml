@@ -89,15 +89,15 @@ jobs:
           path: build/*.deb
 
   build-alpine:
-    name: Build Alpine (${{ matrix.arch }})
+    name: Build Alpine ${{ matrix.codename }} (${{ matrix.arch }})
     runs-on: linux_amd64
     strategy:
       matrix:
         include:
           - arch: arm64
-            platform: linux/arm64
+            codename: alpine
           - arch: amd64
-            platform: linux/amd64
+            codename: alpine
 
     container:
       image: alpine:latest
@@ -112,60 +112,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install build dependencies
+      - name: Install build and packaging dependencies
         run: |
-          apk add --no-cache build-base cmake alsa-lib-dev tar
-
-      - name: Get version from changelog
-        id: get_version
-        run: |
-          apk add --no-cache dpkg-dev
-          VERSION=$(dpkg-parsechangelog -S Version)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
+          apk add --no-cache build-base cmake alsa-lib-dev dpkg-dev debhelper perl
 
       - name: Build for Alpine
         run: |
-          echo "=== Building for Alpine Linux (${{ matrix.arch }}) ==="
-          mkdir -p build install
-          cd build
-          cmake .. \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr \
-            -DBUILD_TESTS=OFF
-          make -j$(nproc)
+          echo "=== Building for Alpine Linux (musl) (${{ matrix.arch }}) ==="
+          dpkg-buildpackage -us -uc -b
 
           echo ""
-          echo "=== Installing to staging directory ==="
-          make install DESTDIR="$PWD/install"
+          echo "=== Build artifacts ==="
+          ls -lh ../*.deb
 
-          echo ""
-          echo "=== Installed files ==="
-          find install -type f
-
-      - name: Create tarball
-        id: create_tarball
-        run: |
-          cd build
-          VERSION="${{ steps.get_version.outputs.version }}"
-          TARBALL_NAME="martinmunk-alsa-control-avr-${VERSION}-alpine-${{ matrix.arch }}.tar.gz"
-
-          echo "Creating tarball: $TARBALL_NAME"
-          tar czf "$TARBALL_NAME" -C install .
-
-          mkdir -p ../artifacts
-          mv "$TARBALL_NAME" ../artifacts/
-
-          echo ""
-          echo "=== Tarball created ==="
-          ls -lh ../artifacts/
-          echo "tarball_name=$TARBALL_NAME" >> $GITHUB_OUTPUT
+          # Move .deb files to build directory
+          mkdir -p build
+          mv ../*.deb build/ 2>/dev/null || true
+          ls -lh build/
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: alsa-avr-control-alpine-${{ matrix.arch }}
-          path: artifacts/*.tar.gz
+          name: alsa-avr-control-${{ matrix.codename }}-${{ matrix.arch }}
+          path: build/*.deb
 
   publish-debian:
     name: Publish Debian to Package Registry
@@ -237,69 +206,59 @@ jobs:
     runs-on: linux_amd64
     strategy:
       matrix:
-        arch: [arm64, amd64]
-
-    container:
-      image: alpine:latest
+        include:
+          - arch: arm64
+            codename: alpine
+          - arch: amd64
+            codename: alpine
 
     steps:
-      - name: Install dependencies
-        run: |
-          apk add --no-cache curl dpkg-dev
-
-      - name: Checkout code (for version info)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Get version
-        id: get_version
-        run: |
-          VERSION=$(dpkg-parsechangelog -S Version)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-
       - name: Download artifacts
         uses: actions/download-artifact@v3
         with:
-          name: alsa-avr-control-alpine-${{ matrix.arch }}
+          name: alsa-avr-control-${{ matrix.codename }}-${{ matrix.arch }}
           path: packages/
 
-      - name: Publish to Gitea Generic Package Registry
+      - name: Publish to Gitea Package Registry
         env:
           GITEA_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
           GITEA_URL: ${{ github.server_url }}
         run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
-          TARBALL_FILE=$(ls packages/*.tar.gz | head -1)
+          # Find the .deb file
+          PACKAGE_FILE=$(ls packages/*.deb | head -1)
 
-          if [ -z "$TARBALL_FILE" ]; then
-            echo "No tarball file found!"
+          if [ -z "$PACKAGE_FILE" ]; then
+            echo "No package file found!"
             exit 1
           fi
 
-          TARBALL_NAME=$(basename "$TARBALL_FILE")
+          # Extract package info
+          PACKAGE_NAME=$(basename "$PACKAGE_FILE" | cut -d'_' -f1)
+          PACKAGE_VERSION=$(basename "$PACKAGE_FILE" | sed 's/.*_\([0-9][^_]*\)_.*/\1/')
 
-          echo "=== Publishing to Gitea Generic Package Registry ==="
-          echo "Package: martinmunk-alsa-control-avr"
-          echo "Version: $VERSION"
+          echo "=== Publishing Alpine-built package to Gitea Debian Repository ==="
+          echo "Package: $PACKAGE_NAME"
+          echo "Version: $PACKAGE_VERSION"
+          echo "Distribution: ${{ matrix.codename }} (Alpine/musl-built)"
           echo "Architecture: ${{ matrix.arch }}"
-          echo "File: $TARBALL_NAME"
+          echo "File: $PACKAGE_FILE"
 
-          # Upload to Gitea Generic Package Registry
+          # Upload to Gitea Debian Package Repository under "alpine" distribution
           curl -f -H "Authorization: token $GITEA_TOKEN" \
-            --upload-file "$TARBALL_FILE" \
-            "$GITEA_URL/api/packages/${{ github.repository_owner }}/generic/martinmunk-alsa-control-avr/$VERSION/$TARBALL_NAME"
+            --upload-file "$PACKAGE_FILE" \
+            "$GITEA_URL/api/packages/${{ github.repository_owner }}/debian/pool/${{ matrix.codename }}/main/upload"
 
           if [ $? -eq 0 ]; then
             echo ""
             echo "========================================="
-            echo "✅ Successfully published Alpine package $VERSION"
+            echo "✅ Successfully published $PACKAGE_NAME $PACKAGE_VERSION"
+            echo "   Distribution: ${{ matrix.codename }} (Alpine/musl-built binaries)"
             echo "   Architecture: ${{ matrix.arch }}"
-            echo "   File: $TARBALL_NAME"
             echo ""
-            echo "Download URL:"
-            echo "  $GITEA_URL/${{ github.repository_owner }}/packages/generic/martinmunk-alsa-control-avr/$VERSION/$TARBALL_NAME"
+            echo "Install on Pi (for volume-mounting to Alpine containers):"
+            echo "  echo 'deb $GITEA_URL/${{ github.repository_owner }}/debian alpine main' | sudo tee /etc/apt/sources.list.d/martinmunk-alpine.list"
+            echo "  sudo apt update"
+            echo "  sudo apt install $PACKAGE_NAME"
             echo "========================================="
           else
             echo "❌ Failed to publish package"
