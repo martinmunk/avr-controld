@@ -6,7 +6,7 @@ Build-Depends: debhelper-compat (= 12),
  cmake,
  libasound2-dev
 Standards-Version: 4.6.0
-Homepage: https://github.com/martinmunk/alsa-avr-control
+Homepage: http://gitea.servers.vejen.loc.martinmunk.com:3000/martinmunk/alsa-avr-control
 
 Package: martinmunk-alsa-control-avr
 Architecture: any
