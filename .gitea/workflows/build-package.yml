@@ -18,26 +18,12 @@ jobs:
     strategy:
       matrix:
         include:
-          # ARM64 builds
-          - arch: arm64
-            dist: debian:bookworm
-            codename: bookworm
           - arch: arm64
             dist: debian:trixie
             codename: trixie
-          # AMD64 builds
-          - arch: amd64
-            dist: debian:bookworm
-            codename: bookworm
           - arch: amd64
             dist: debian:trixie
             codename: trixie
-          - arch: amd64
-            dist: ubuntu:jammy
-            codename: jammy
-          - arch: amd64
-            dist: ubuntu:noble
-            codename: noble
 
     container:
       image: ${{ matrix.dist }}
@@ -114,17 +100,9 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            codename: bookworm
-          - arch: arm64
             codename: trixie
           - arch: amd64
-            codename: bookworm
-          - arch: amd64
             codename: trixie
-          - arch: amd64
-            codename: jammy
-          - arch: amd64
-            codename: noble
 
     steps:
       - name: Download artifacts
