@@ -130,25 +130,25 @@ jobs:
 
           # Override CMAKE_INSTALL_PREFIX to install to /opt/alsa-avr-control-alpine
           # This allows both native and alpine packages to be installed together
-          cat > debian/rules.alpine << 'EOF'
-#!/usr/bin/make -f
-
-%:
-	dh $@ --buildsystem=cmake
-
-override_dh_auto_configure:
-	dh_auto_configure -- \
-		-DCMAKE_BUILD_TYPE=Release \
-		-DCMAKE_INSTALL_PREFIX=/opt/alsa-avr-control-alpine \
-		-DBUILD_TESTS=OFF
-
-override_dh_auto_test:
-	# Skip tests during package build
-
-override_dh_strip:
-	# Keep debug symbols for better diagnostics
-	dh_strip --no-automatic-dbgsym
-EOF
+          {
+            echo '#!/usr/bin/make -f'
+            echo ''
+            echo '%:'
+            echo '	dh $@ --buildsystem=cmake'
+            echo ''
+            echo 'override_dh_auto_configure:'
+            echo '	dh_auto_configure -- \'
+            echo '		-DCMAKE_BUILD_TYPE=Release \'
+            echo '		-DCMAKE_INSTALL_PREFIX=/opt/alsa-avr-control-alpine \'
+            echo '		-DBUILD_TESTS=OFF'
+            echo ''
+            echo 'override_dh_auto_test:'
+            echo '	# Skip tests during package build'
+            echo ''
+            echo 'override_dh_strip:'
+            echo '	# Keep debug symbols for better diagnostics'
+            echo '	dh_strip --no-automatic-dbgsym'
+          } > debian/rules.alpine
 
           # Replace debian/rules with Alpine version
           mv debian/rules.alpine debian/rules
