@@ -1,3 +1,11 @@
+martinmunk-alsa-control-avr (0.1.1) stable; urgency=medium
+
+  * Make create-release.sh interactive by default
+  * Fix Homepage URL to point to Gitea instead of GitHub
+  * Fix workflow tag pattern to match package-prefixed release tags
+
+ -- Martin Munk Hansen <mhansen@roku.com>  Thu, 05 Feb 2026 22:32:12 +0000
+
 martinmunk-alsa-control-avr (0.1.0) stable; urgency=medium
 
   * Use cross-compilation for ARM64 on AMD64 runners
