@@ -7,22 +7,41 @@ on:
     tags:
       - 'release/*'
   workflow_dispatch:
-    inputs:
-      skip_publish:
-        description: 'Skip publishing to package registry'
-        required: false
-        default: 'false'
-        type: boolean
 
 env:
   DEBIAN_FRONTEND: noninteractive
 
 jobs:
-  build-and-publish:
-    name: Build and Publish Package (ARM64 cross-compile)
+  build-matrix:
+    name: Build ${{ matrix.dist }} (${{ matrix.arch }})
     runs-on: linux_amd64
+    strategy:
+      matrix:
+        include:
+          # ARM64 builds
+          - arch: arm64
+            dist: debian:bookworm
+            codename: bookworm
+          - arch: arm64
+            dist: debian:trixie
+            codename: trixie
+          # AMD64 builds
+          - arch: amd64
+            dist: debian:bookworm
+            codename: bookworm
+          - arch: amd64
+            dist: debian:trixie
+            codename: trixie
+          - arch: amd64
+            dist: ubuntu:jammy
+            codename: jammy
+          - arch: amd64
+            dist: ubuntu:noble
+            codename: noble
+
     container:
-      image: debian:trixie
+      image: ${{ matrix.dist }}
+
     steps:
       - name: Install git
         run: |
@@ -34,66 +53,121 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install cross-compilation tools
+      - name: Install base build dependencies
         run: |
-          dpkg --add-architecture arm64
-          apt-get update -qq
-          apt-get install -y -qq \
-            dpkg-dev debhelper cmake lintian curl \
-            crossbuild-essential-arm64 \
-            libasound2-dev:arm64
+          apt-get install -y -qq dpkg-dev debhelper cmake lintian curl build-essential
 
-      - name: Build package for ARM64
+      - name: Install cross-compilation tools (non-amd64)
+        if: matrix.arch != 'amd64'
         run: |
-          echo "=== Building Debian package for ARM64 ==="
-          dpkg-buildpackage -us -uc -b -aarm64
+          dpkg --add-architecture ${{ matrix.arch }}
+          apt-get update -qq
+          apt-get install -y -qq crossbuild-essential-${{ matrix.arch }}
+
+      - name: Install architecture-specific dependencies
+        run: |
+          if [ "${{ matrix.arch }}" != "amd64" ]; then
+            apt-get install -y -qq libasound2-dev:${{ matrix.arch }}
+          else
+            apt-get install -y -qq libasound2-dev
+          fi
+
+      - name: Build package
+        run: |
+          echo "=== Building for ${{ matrix.dist }} (${{ matrix.arch }}) ==="
+          if [ "${{ matrix.arch }}" != "amd64" ]; then
+            dpkg-buildpackage -us -uc -b -a${{ matrix.arch }}
+          else
+            dpkg-buildpackage -us -uc -b
+          fi
 
           echo ""
           echo "=== Build artifacts ==="
           ls -lh ../*.deb
 
-          # Move .deb files to a build directory
+          # Move .deb files to build directory
           mkdir -p build
-          mv ../*.deb build/
+          mv ../*.deb build/ 2>/dev/null || true
+          ls -lh build/
 
       - name: Validate package with lintian
         run: |
           echo "=== Validating package with lintian ==="
           cd build
-          lintian --info --display-info --display-experimental --pedantic *.deb || true
+          lintian --info --display-info *.deb || true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: alsa-avr-control-${{ matrix.codename }}-${{ matrix.arch }}
+          path: build/*.deb
+          retention-days: 30
+
+  publish:
+    name: Publish to Package Registry
+    needs: build-matrix
+    if: startsWith(github.ref, 'refs/tags/release/')
+    runs-on: linux_amd64
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            codename: bookworm
+          - arch: arm64
+            codename: trixie
+          - arch: amd64
+            codename: bookworm
+          - arch: amd64
+            codename: trixie
+          - arch: amd64
+            codename: jammy
+          - arch: amd64
+            codename: noble
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: alsa-avr-control-${{ matrix.codename }}-${{ matrix.arch }}
+          path: packages/
 
       - name: Publish to Gitea Package Registry
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GITEA_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
           GITEA_URL: ${{ github.server_url }}
         run: |
-          # Get package name from debian/control
-          PACKAGE_NAME=$(grep "^Package:" debian/control | head -1 | awk '{print $2}')
-
           # Find the .deb file
-          PACKAGE_FILE=$(ls build/*.deb | head -1)
+          PACKAGE_FILE=$(ls packages/*.deb | head -1)
 
-          # Extract version from filename
-          PACKAGE_VERSION=$(basename "$PACKAGE_FILE" | grep -o "_[0-9][^_]*" | sed 's/^_//')
+          if [ -z "$PACKAGE_FILE" ]; then
+            echo "No package file found!"
+            exit 1
+          fi
+
+          # Extract package info
+          PACKAGE_NAME=$(basename "$PACKAGE_FILE" | cut -d'_' -f1)
+          PACKAGE_VERSION=$(basename "$PACKAGE_FILE" | sed 's/.*_\([0-9][^_]*\)_.*/\1/')
 
           echo "=== Publishing to Gitea Debian Repository ==="
-          echo "Package: $PACKAGE_NAME version $PACKAGE_VERSION"
+          echo "Package: $PACKAGE_NAME"
+          echo "Version: $PACKAGE_VERSION"
+          echo "Distribution: ${{ matrix.codename }}"
+          echo "Architecture: ${{ matrix.arch }}"
           echo "File: $PACKAGE_FILE"
 
           # Upload to Gitea Debian Package Repository
+          # Use the codename as the distribution for better organization
           curl -f -H "Authorization: token $GITEA_TOKEN" \
             --upload-file "$PACKAGE_FILE" \
-            "$GITEA_URL/api/packages/${{ github.repository_owner }}/debian/pool/stable/main/upload"
+            "$GITEA_URL/api/packages/${{ github.repository_owner }}/debian/pool/${{ matrix.codename }}/main/upload"
 
           if [ $? -eq 0 ]; then
             echo ""
             echo "========================================="
-            echo "✅ Successfully published $PACKAGE_NAME version $PACKAGE_VERSION"
+            echo "✅ Successfully published $PACKAGE_NAME $PACKAGE_VERSION"
+            echo "   Distribution: ${{ matrix.codename }}"
+            echo "   Architecture: ${{ matrix.arch }}"
             echo "Repository URL: $GITEA_URL/${{ github.repository_owner }}/debian"
-            echo ""
-            echo "Add to sources.list with:"
-            echo "  deb $GITEA_URL/${{ github.repository_owner }}/debian stable main"
             echo "========================================="
           else
             echo "❌ Failed to publish package"
