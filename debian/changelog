@@ -1,3 +1,15 @@
+martinmunk-alsa-control-avr (0.1.3) stable; urgency=medium
+
+  * Add Alpine Linux build support for volume mounting
+  * Add Alpine Linux builds to CI/CD pipeline
+  * Build in Alpine but package as Debian packages
+  * Only build Alpine packages for ARM64
+  * Use different package name for Alpine builds
+  * Install Alpine package to separate location
+  * Use 'stable' distribution for Alpine packages
+
+ -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 00:07:24 +0100
+
 martinmunk-alsa-control-avr (0.1.2) stable; urgency=medium
 
   * Use simple release tags without package prefix
