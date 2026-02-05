@@ -19,8 +19,8 @@ env:
 
 jobs:
   build-and-publish:
-    name: Build and Publish Package
-    runs-on: linux_arm64
+    name: Build and Publish Package (ARM64 cross-compile)
+    runs-on: linux_amd64
     container:
       image: debian:trixie
     steps:
@@ -34,14 +34,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install build dependencies
+      - name: Install cross-compilation tools
         run: |
-          apt-get install -y -qq dpkg-dev debhelper cmake libasound2-dev g++ lintian curl
+          dpkg --add-architecture arm64
+          apt-get update -qq
+          apt-get install -y -qq \
+            dpkg-dev debhelper cmake lintian curl \
+            crossbuild-essential-arm64 \
+            libasound2-dev:arm64
 
-      - name: Build package
+      - name: Build package for ARM64
         run: |
-          echo "=== Building Debian package ==="
-          dpkg-buildpackage -us -uc -b
+          echo "=== Building Debian package for ARM64 ==="
+          dpkg-buildpackage -us -uc -b -aarm64
 
           echo ""
           echo "=== Build artifacts ==="
