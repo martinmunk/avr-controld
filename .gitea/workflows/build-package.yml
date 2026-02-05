@@ -96,8 +96,6 @@ jobs:
         include:
           - arch: arm64
             codename: alpine
-          - arch: amd64
-            codename: alpine
 
     container:
       image: alpine:latest
@@ -208,8 +206,6 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            codename: alpine
-          - arch: amd64
             codename: alpine
 
     steps:
