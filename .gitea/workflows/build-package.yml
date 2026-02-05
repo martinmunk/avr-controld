@@ -5,7 +5,7 @@ on:
     branches:
       - main
     tags:
-      - 'release/*'
+      - '*/release/*'
   workflow_dispatch:
 
 env:
@@ -91,7 +91,7 @@ jobs:
   publish:
     name: Publish to Package Registry
     needs: build-matrix
-    if: startsWith(github.ref, 'refs/tags/release/')
+    if: contains(github.ref, '/release/')
     runs-on: linux_amd64
     strategy:
       matrix:
