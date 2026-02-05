@@ -97,6 +97,12 @@ jobs:
           cd build
           lintian --info --display-info *.deb || true
 
+      - name: Install Node.js for artifact upload
+        run: |
+          # Install Node.js for the upload-artifact action
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y -qq nodejs
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
