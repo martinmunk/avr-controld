@@ -1,3 +1,9 @@
+martinmunk-alsa-control-avr (0.2.1) stable; urgency=medium
+
+  * Set correct architecture for Alpine packages
+
+ -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 02:45:50 +0100
+
 martinmunk-alsa-control-avr (0.2.0) stable; urgency=medium
 
   * Skip dh_strip for Alpine packages
