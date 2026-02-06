@@ -24,7 +24,7 @@ jobs:
             codename: trixie
 
     container:
-      image: node:slim
+      image: ${{ matrix.dist }}
 
     steps:
       - name: Install git

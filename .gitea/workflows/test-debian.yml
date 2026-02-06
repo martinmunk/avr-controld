@@ -17,10 +17,12 @@ jobs:
       matrix:
         include:
           - arch: arm64
+            dist: debian:trixie
           - arch: amd64
+            dist: debian:trixie
 
     container:
-      image: node:bookworm-slim
+      image: ${{ matrix.dist }}
 
     steps:
       - name: Install git
