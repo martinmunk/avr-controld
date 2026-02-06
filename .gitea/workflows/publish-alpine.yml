@@ -138,8 +138,9 @@ jobs:
           cat > debian/rules << 'EOF'
           #!/usr/bin/make -f
 
+          # Skip binary analysis tools that can't handle cross-arch ARM64 binaries
           %:
-          	dh $@
+          	dh $@ --without=strip,dwz,makeshlibs,shlibdeps
 
           override_dh_auto_configure:
           	# Skip configure - binaries already built
@@ -154,22 +155,6 @@ jobs:
           	# Copy pre-built binaries from Alpine build
           	mkdir -p debian/martinmunk-alsa-control-avr-alpine
           	cp -r alpine-binaries/* debian/martinmunk-alsa-control-avr-alpine/
-
-          override_dh_strip:
-          	# Skip strip - these are ARM64 binaries being packaged on amd64
-          	# strip cannot handle cross-architecture binaries
-
-          override_dh_dwz:
-          	# Skip dwz - these are ARM64 binaries being packaged on amd64
-          	# dwz cannot handle cross-architecture binaries
-
-          override_dh_makeshlibs:
-          	# Skip makeshlibs - these are ARM64 binaries being packaged on amd64
-          	# objdump cannot handle cross-architecture binaries
-
-          override_dh_shlibdeps:
-          	# Skip dependency analysis - these are musl binaries for Alpine containers
-          	# They won't run on Debian hosts, only inside Alpine containers
           EOF
 
           chmod +x debian/rules
