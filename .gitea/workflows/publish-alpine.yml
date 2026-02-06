@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - arch: arm64
+          - arch: amd64
             codename: stable
 
     container:
@@ -68,7 +68,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - arch: arm64
+          - arch: amd64
             codename: stable
 
     container:
@@ -156,7 +156,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - arch: arm64
+          - arch: amd64
             codename: stable
 
     steps:
