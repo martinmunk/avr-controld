@@ -146,12 +146,11 @@ if [ "$NON_INTERACTIVE" = false ]; then
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
         echo -e "${GREEN}Building package...${NC}"
-        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        "$SCRIPT_DIR/buildpackage.sh"
+        dpkg-buildpackage -us -uc -b
 
         echo ""
         echo -e "${GREEN}Build complete!${NC}"
-        ls -lh build-deb/*.deb 2>/dev/null || echo "No .deb files found"
+        ls -lh ../*.deb 2>/dev/null || echo "No .deb files found"
         echo ""
     fi
 fi
