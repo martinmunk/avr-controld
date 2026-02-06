@@ -123,6 +123,10 @@ jobs:
           override_dh_strip:
           	# Keep debug symbols
           	dh_strip --no-automatic-dbgsym
+
+          override_dh_shlibdeps:
+          	# Skip dependency analysis - these are musl binaries for Alpine containers
+          	# They won't run on Debian hosts, only inside Alpine containers
           EOF
 
           chmod +x debian/rules
