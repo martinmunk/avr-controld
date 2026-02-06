@@ -170,8 +170,8 @@ jobs:
 
           chmod +x debian/rules
 
-          # Build the package
-          dpkg-buildpackage -us -uc -b
+          # Build the package for ARM64
+          dpkg-buildpackage -us -uc -b -aarm64
 
           echo ""
           echo "=== Build artifacts ==="
