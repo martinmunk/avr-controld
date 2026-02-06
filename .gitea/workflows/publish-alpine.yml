@@ -171,7 +171,8 @@ jobs:
           chmod +x debian/rules
 
           # Build the package for ARM64
-          dpkg-buildpackage -us -uc -b -aarm64
+          # Use -d to skip build dependency checks since we're packaging pre-built binaries
+          dpkg-buildpackage -us -uc -b -aarm64 -d
 
           echo ""
           echo "=== Build artifacts ==="
