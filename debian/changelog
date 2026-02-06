@@ -1,3 +1,13 @@
+martinmunk-alsa-control-avr (0.1.9) stable; urgency=medium
+
+  * Clean up repository: remove old build scripts, test files, and organize Docker files
+  * Fix Alpine package architecture from arm64 to amd64
+  * Restore create-release.sh instead of bump-and-release.sh
+  * Remove scripts/bump-and-release.sh
+  * Add ARM64 cross-compilation for Alpine builds
+
+ -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 01:38:05 +0100
+
 martinmunk-alsa-control-avr (0.1.8) stable; urgency=medium
 
   * Add script to bump version and create releases
