@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - arch: amd64
+          - arch: arm64
 
     container:
       image: node:alpine
@@ -31,19 +31,33 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install build dependencies
+      - name: Install build dependencies and cross-compilation tools
         run: |
-          apk add --no-cache build-base cmake alsa-lib-dev
+          # Install native build tools
+          apk add --no-cache build-base cmake
 
-      - name: Build and test with CMake
+          # Install ARM64 cross-compilation toolchain
+          apk add --no-cache gcc-aarch64-none-elf g++-aarch64-none-elf
+
+          # Add ARM64 architecture and install ARM64 alsa-lib
+          apk add --no-cache --arch aarch64 alsa-lib-dev || \
+            apk add --no-cache alsa-lib-dev
+
+      - name: Build and test with CMake for ARM64
         run: |
           echo "=== Building and testing for Alpine Linux (musl) (${{ matrix.arch }}) ==="
 
           mkdir -p build
           cd build
+
+          # Cross-compile for ARM64
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/opt/alsa-avr-control-alpine \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-none-elf-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-none-elf-g++ \
             -DBUILD_TESTS=OFF
           make -j$(nproc)
 
