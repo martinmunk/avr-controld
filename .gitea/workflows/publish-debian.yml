@@ -59,19 +59,23 @@ jobs:
       - name: Build package
         run: |
           echo "=== Building package for ${{ matrix.dist }} (${{ matrix.arch }}) ==="
+
+          # Set architecture for cross-compilation if needed
           if [ "${{ matrix.arch }}" != "amd64" ]; then
-            dpkg-buildpackage -us -uc -b -a${{ matrix.arch }}
-          else
-            dpkg-buildpackage -us -uc -b
+            export DEB_BUILD_OPTIONS="nocheck"
+            export ARCH=${{ matrix.arch }}
           fi
+
+          # Run buildpackage.sh script
+          ./buildpackage.sh
 
           echo ""
           echo "=== Build artifacts ==="
-          ls -lh ../*.deb
+          ls -lh build-deb/*.deb
 
-          # Move .deb files to build directory
+          # Move .deb files to build directory for artifact upload
           mkdir -p build
-          mv ../*.deb build/ 2>/dev/null || true
+          cp build-deb/*.deb build/ 2>/dev/null || true
           ls -lh build/
 
       - name: Validate package with lintian
