@@ -1,3 +1,10 @@
+martinmunk-alsa-control-avr (0.2.3) stable; urgency=medium
+
+  * Skip dh_makeshlibs for cross-architecture Alpine binaries
+  * Use dh --without instead of individual overrides
+
+ -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 03:07:19 +0100
+
 martinmunk-alsa-control-avr (0.2.2) stable; urgency=medium
 
   * Skip build dependency checks for Alpine packaging
