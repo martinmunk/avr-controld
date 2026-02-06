@@ -12,7 +12,7 @@ env:
 jobs:
   test-alpine:
     name: Test Alpine Build (${{ matrix.arch }})
-    runs-on: linux_amd64
+    runs-on: linux_${{ matrix.arch }}
     strategy:
       matrix:
         include:
@@ -31,16 +31,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install build dependencies and cross-compilation tools
+      - name: Install build dependencies
         run: |
           # Install native build tools
-          apk add --no-cache build-base cmake
-
-          # Install ARM64 cross-compilation toolchain for Linux
-          apk add --no-cache aarch64-linux-musl-cross
-
-          # Install ARM64 alsa-lib-dev
-          apk add --no-cache alsa-lib-dev
+          apk add --no-cache build-base cmake alsa-lib-dev
 
       - name: Build and test with CMake for ARM64
         run: |
@@ -49,18 +43,10 @@ jobs:
           mkdir -p build
           cd build
 
-          # Cross-compile for ARM64 with musl toolchain
+          # Native build for ARM64 with musl
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/opt/alsa-avr-control-alpine \
-            -DCMAKE_SYSTEM_NAME=Linux \
-            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-            -DCMAKE_C_COMPILER=/usr/bin/aarch64-linux-musl-gcc \
-            -DCMAKE_CXX_COMPILER=/usr/bin/aarch64-linux-musl-g++ \
-            -DCMAKE_FIND_ROOT_PATH=/usr/aarch64-linux-musl \
-            -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
-            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
-            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
             -DBUILD_TESTS=OFF
           make -j$(nproc)
 
