@@ -24,7 +24,7 @@ jobs:
             codename: trixie
 
     container:
-      image: node:bookworm-slim
+      image: node:slim
 
     steps:
       - name: Install git
