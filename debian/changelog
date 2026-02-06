@@ -1,3 +1,10 @@
+martinmunk-alsa-control-avr (0.1.10) stable; urgency=medium
+
+  * Fix create-release.sh to use dpkg-buildpackage directly
+  * Restore buildpackage.sh and update workflows to use it
+
+ -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 01:41:48 +0100
+
 martinmunk-alsa-control-avr (0.1.9) stable; urgency=medium
 
   * Clean up repository: remove old build scripts, test files, and organize Docker files
