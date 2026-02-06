@@ -39,7 +39,7 @@ jobs:
 
       - name: Install base build dependencies
         run: |
-          apt-get install -y -qq dpkg-dev debhelper cmake lintian curl build-essential rsync
+          apt-get install -y -qq dpkg-dev debhelper cmake lintian curl build-essential rsync devscripts
 
       - name: Install cross-compilation tools (non-amd64)
         if: matrix.arch != 'amd64'
