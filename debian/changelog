@@ -1,3 +1,13 @@
+martinmunk-alsa-control-avr (0.1.12) stable; urgency=medium
+
+  * Fix Alpine ARM64 cross-compilation to use correct musl toolchain
+  * Disable integration tests in test-debian workflow
+  * Add devscripts dependency for dch command
+  * Use native ARM64 runners for Alpine builds instead of cross-compilation
+  * Use musl.cc cross-compiler for Alpine ARM64 builds
+
+ -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 02:18:00 +0100
+
 martinmunk-alsa-control-avr (0.1.11) stable; urgency=medium
 
   * Add rsync to build dependencies for buildpackage.sh
