@@ -36,12 +36,11 @@ jobs:
           # Install native build tools
           apk add --no-cache build-base cmake
 
-          # Install ARM64 cross-compilation toolchain
-          apk add --no-cache gcc-aarch64-none-elf g++-aarch64-none-elf
+          # Install ARM64 cross-compilation toolchain for Linux
+          apk add --no-cache aarch64-linux-musl-cross
 
-          # Add ARM64 architecture and install ARM64 alsa-lib
-          apk add --no-cache --arch aarch64 alsa-lib-dev || \
-            apk add --no-cache alsa-lib-dev
+          # Install ARM64 alsa-lib-dev
+          apk add --no-cache alsa-lib-dev
 
       - name: Build and test with CMake for ARM64
         run: |
@@ -50,14 +49,18 @@ jobs:
           mkdir -p build
           cd build
 
-          # Cross-compile for ARM64
+          # Cross-compile for ARM64 with musl toolchain
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/opt/alsa-avr-control-alpine \
             -DCMAKE_SYSTEM_NAME=Linux \
             -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-            -DCMAKE_C_COMPILER=aarch64-none-elf-gcc \
-            -DCMAKE_CXX_COMPILER=aarch64-none-elf-g++ \
+            -DCMAKE_C_COMPILER=/usr/bin/aarch64-linux-musl-gcc \
+            -DCMAKE_CXX_COMPILER=/usr/bin/aarch64-linux-musl-g++ \
+            -DCMAKE_FIND_ROOT_PATH=/usr/aarch64-linux-musl \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
             -DBUILD_TESTS=OFF
           make -j$(nproc)
 
