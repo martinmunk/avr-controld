@@ -159,6 +159,10 @@ jobs:
           	# Keep debug symbols
           	dh_strip --no-automatic-dbgsym
 
+          override_dh_dwz:
+          	# Skip dwz - these are ARM64 binaries being packaged on amd64
+          	# dwz cannot handle cross-architecture binaries
+
           override_dh_shlibdeps:
           	# Skip dependency analysis - these are musl binaries for Alpine containers
           	# They won't run on Debian hosts, only inside Alpine containers
