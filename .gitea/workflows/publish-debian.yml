@@ -63,7 +63,7 @@ jobs:
           # Set architecture for cross-compilation if needed
           if [ "${{ matrix.arch }}" != "amd64" ]; then
             export DEB_BUILD_OPTIONS="nocheck"
-            export ARCH=${{ matrix.arch }}
+            export TARGET_ARCH=${{ matrix.arch }}
           fi
 
           # Run buildpackage.sh script
