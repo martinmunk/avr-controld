@@ -6,11 +6,12 @@ Build-Depends: debhelper-compat (= 12),
  cmake,
  libasound2-dev
 Standards-Version: 4.6.0
-Homepage: http://gitea.servers.vejen.loc.martinmunk.com:3000/martinmunk/alsa-avr-control
+Homepage: http://forgejo.servers.vejen.loc.martinmunk.com:3000/martinmunk/alsa-avr-control
 
 Package: martinmunk-alsa-control-avr
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: cec-utils
 Description: ALSA control plugins for AV receivers
  ALSA external control plugins for controlling AV receivers through
  various communication backends.

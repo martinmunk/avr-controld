@@ -1,3 +1,13 @@
+martinmunk-alsa-control-avr (0.2.5) stable; urgency=medium
+
+  * postinst: add the shairport-sync service user to the dialout group so the
+    serial AVR backends (Opalum/NAD) can access /dev/ttyUSB* when shairport
+    drives the mixer (guarded; no-op if that user is absent).
+  * Recommends cec-utils (the CEC backend shells out to cec-client).
+  * Point Homepage at Forgejo (gitea is being decommissioned).
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Thu, 06 Aug 2026 09:47:59 +0000
+
 martinmunk-alsa-control-avr (0.2.4) stable; urgency=medium
 
   * Fix dh overrides to actually execute and skip tools
