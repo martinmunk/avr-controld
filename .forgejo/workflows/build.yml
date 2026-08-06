@@ -39,12 +39,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Everything (deps + build + verify) in one traced, fully-logged step so
-      # that ANY failure point is captured to /tmp/build.log and shipped below.
       - name: Build and verify (logged)
         run: |
           {
             set -ex
+            df -h /
             apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file
             if [ "${{ matrix.arch }}" = "arm64" ]; then
               dpkg --add-architecture arm64
@@ -53,6 +52,7 @@ jobs:
             else
               apt-get install -y -qq libasound2-dev
             fi
+            df -h /
             if [ "${{ matrix.arch }}" != "$(dpkg --print-architecture)" ]; then
               TARGET_ARCH=${{ matrix.arch }} ./buildpackage.sh
             else
@@ -63,24 +63,21 @@ jobs:
           } 2>&1 | tee /tmp/build.log
           exit ${PIPESTATUS[0]}
 
-      # DIAGNOSTIC: artifact download + Actions logs are both inaccessible on
-      # this instance, so on failure push the captured output to the generic
-      # package registry, which IS downloadable with a token.
-      - name: Ship build log on failure
-        if: failure()
-        env:
-          TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
-          URL: ${{ github.server_url }}
-        run: |
-          ls -l /tmp/build.log || echo "(no build.log)"
-          curl -f -H "Authorization: token $TOKEN" \
-            --upload-file /tmp/build.log \
-            "$URL/api/packages/${{ github.repository_owner }}/generic/ci-debug/r${{ github.run_number }}-${{ matrix.arch }}/build.log" \
-            || echo "log upload failed"
-
       - name: Upload build artifacts
         if: success()
         uses: actions/upload-artifact@v3
         with:
           name: martinmunk-alsa-control-avr-${{ matrix.codename }}-${{ matrix.arch }}
           path: build-deb/*.deb
+
+      # DIAGNOSTIC (temporary): logs/artifacts are inaccessible on this instance
+      # and the repo has no PACKAGE_REGISTRY_TOKEN secret, so POST the captured
+      # output to a listener on the dev box. LAST, so it also catches an
+      # upload-artifact failure.
+      - name: Ship build log on failure
+        if: failure()
+        run: |
+          ls -l /tmp/build.log || echo "(no build.log)"
+          curl -f -X PUT --data-binary @/tmp/build.log \
+            "http://192.168.20.94:8099/r${{ github.run_number }}-${{ matrix.arch }}" \
+            || echo "post failed (runner cannot reach 192.168.20.94:8099?)"
