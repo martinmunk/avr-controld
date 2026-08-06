@@ -39,34 +39,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install build tools
+      - name: Build and verify (logged)
         run: |
-          apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file
+          {
+            set -ex
+            apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file
+            if [ "${{ matrix.arch }}" = "arm64" ]; then
+              dpkg --add-architecture arm64
+              apt-get update -qq
+              apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libasound2-dev
+            else
+              apt-get install -y -qq libasound2-dev
+            fi
+            if [ "${{ matrix.arch }}" != "$(dpkg --print-architecture)" ]; then
+              TARGET_ARCH=${{ matrix.arch }} ./buildpackage.sh
+            else
+              ./buildpackage.sh
+            fi
+            ls -lh build-deb/*.deb
+            bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
+          } 2>&1 | tee /tmp/build.log
+          exit ${PIPESTATUS[0]}
 
-      - name: Add arm64 architecture and cross toolchain
-        if: matrix.arch == 'arm64'
+      - name: Ship build log on failure
+        if: failure()
         run: |
-          dpkg --add-architecture arm64
-          apt-get update -qq
-          # native libasound2-dev too, so buildpackage.sh's dpkg-checkbuilddeps
-          # is satisfied and it doesn't fall into the mk-build-deps/equivs path
-          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libasound2-dev
-
-      - name: Install native build dependencies (amd64)
-        if: matrix.arch == 'amd64'
-        run: |
-          apt-get install -y -qq libasound2-dev
-
-      - name: Build package (buildpackage.sh stamps +debian<N><codename>)
-        run: |
-          if [ "${{ matrix.arch }}" != "$(dpkg --print-architecture)" ]; then
-            TARGET_ARCH=${{ matrix.arch }} ./buildpackage.sh
-          else
-            ./buildpackage.sh
-          fi
-          ls -lh build-deb/*.deb
-
-      # In-job assertion (this Forgejo instance serves no Actions logs, and
-      # upload-artifact is unreliable here, so correctness must be proven here).
-      - name: Verify built package
-        run: bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
+          curl -f -X PUT --data-binary @/tmp/build.log \
+            "http://192.168.20.94:8099/r${{ github.run_number }}-${{ matrix.arch }}" || echo "post failed"
