@@ -13,22 +13,26 @@ ARCH="${2:-}"
 DEB=$(ls "$DIR"/*.deb 2>/dev/null | grep -v dbgsym | head -1 || true)
 [ -n "$DEB" ] || { echo "FAIL: no .deb produced in $DIR"; exit 1; }
 
+# Capture the file list once (avoids `dpkg-deb -c | grep -q` closing the pipe
+# early and spamming SIGPIPE/"Broken pipe" from dpkg-deb).
+CONTENTS=$(dpkg-deb -c "$DEB")
+
 echo "=== control ==="
 dpkg-deb -f "$DEB" Package Version Architecture Depends Recommends
 echo "=== contents ==="
-dpkg-deb -c "$DEB" | awk '{print $6}' | grep -v '/$'
+printf '%s\n' "$CONTENTS" | awk '{print $NF}' | grep -v '/$'
 
 fail() { echo "FAIL: $1"; exit 1; }
+has() { printf '%s\n' "$CONTENTS" | grep -qE "$1"; }
 
 # The four ALSA control plugins must be present (path is multiarch-dependent, so
 # match on the filename under an alsa-lib directory).
 for f in denon nad opalum cec; do
-  dpkg-deb -c "$DEB" | grep -qE "alsa-lib/libasound_module_ctl_${f}\.so$" \
-    || fail "missing plugin libasound_module_ctl_${f}.so"
+  has "alsa-lib/libasound_module_ctl_${f}\.so$" || fail "missing plugin libasound_module_ctl_${f}.so"
 done
 
-dpkg-deb -c "$DEB" | grep -qE 'usr/bin/avr-power$' || fail "avr-power missing"
-dpkg-deb -c "$DEB" | grep -qE 'etc/alsa/conf.d/50-denon-avr\.conf$' || fail "conf.d snippets missing"
+has 'usr/bin/avr-power$' || fail "avr-power missing"
+has 'etc/alsa/conf.d/50-denon-avr\.conf$' || fail "conf.d snippets missing"
 
 # Architecture sanity on the compiled tool.
 rm -rf /tmp/verify-x && mkdir -p /tmp/verify-x && dpkg-deb -x "$DEB" /tmp/verify-x

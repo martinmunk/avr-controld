@@ -41,14 +41,16 @@ jobs:
 
       - name: Install build tools
         run: |
-          apt-get install -y -qq dpkg-dev debhelper cmake build-essential rsync devscripts file
+          apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file
 
       - name: Add arm64 architecture and cross toolchain
         if: matrix.arch == 'arm64'
         run: |
           dpkg --add-architecture arm64
           apt-get update -qq
-          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64
+          # native libasound2-dev too, so buildpackage.sh's dpkg-checkbuilddeps
+          # is satisfied and it doesn't fall into the mk-build-deps/equivs path
+          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libasound2-dev
 
       - name: Install native build dependencies (amd64)
         if: matrix.arch == 'amd64'
