@@ -39,10 +39,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build and verify (logged)
+      # POSIX-safe (works under sh or bash): a subshell with set -e stops at the
+      # first failure and the outer `|| rc=$?` captures it; all output goes to
+      # /tmp/build.log. No bashisms (no PIPESTATUS / process substitution).
+      - name: Build and verify
         run: |
-          {
-            set -ex
+          rc=0
+          ( set -ex
             apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file
             if [ "${{ matrix.arch }}" = "arm64" ]; then
               dpkg --add-architecture arm64
@@ -58,8 +61,9 @@ jobs:
             fi
             ls -lh build-deb/*.deb
             bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
-          } 2>&1 | tee /tmp/build.log
-          exit ${PIPESTATUS[0]}
+          ) > /tmp/build.log 2>&1 || rc=$?
+          tail -n 60 /tmp/build.log
+          exit $rc
 
       - name: Ship build log on failure
         if: failure()
