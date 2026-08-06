@@ -59,15 +59,24 @@ jobs:
 
       - name: Build package (buildpackage.sh stamps +debian<N><codename>)
         run: |
+          set -o pipefail
           if [ "${{ matrix.arch }}" != "$(dpkg --print-architecture)" ]; then
-            TARGET_ARCH=${{ matrix.arch }} ./buildpackage.sh
+            TARGET_ARCH=${{ matrix.arch }} ./buildpackage.sh 2>&1 | tee /tmp/build.log
           else
-            ./buildpackage.sh
+            ./buildpackage.sh 2>&1 | tee /tmp/build.log
           fi
-          ls -lh build-deb/*.deb
+          ls -lh build-deb/*.deb 2>&1 | tee -a /tmp/build.log
 
-      # Asserted in-job on purpose: this Forgejo instance does not serve Actions
-      # job logs afterwards, so a wrong/incomplete package must fail here.
+      # This Forgejo instance does not serve Actions job logs afterwards, so
+      # ship the build output as an artifact to make failures diagnosable.
+      - name: Upload build log (diagnostic)
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: buildlog-${{ matrix.codename }}-${{ matrix.arch }}
+          path: /tmp/build.log
+
+      # Asserted in-job on purpose: a wrong/incomplete package must fail here.
       - name: Verify built package
         run: bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
 
