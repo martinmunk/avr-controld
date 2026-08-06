@@ -5,6 +5,8 @@ martinmunk-alsa-control-avr (0.2.5) stable; urgency=medium
     drives the mixer (guarded; no-op if that user is absent).
   * Recommends cec-utils (the CEC backend shells out to cec-client).
   * Point Homepage at Forgejo (gitea is being decommissioned).
+  * Bump debhelper-compat 12 -> 13 (12 is unsatisfiable on Debian 13 trixie,
+    which provides debhelper-compat 13, so the package could not build).
 
  -- Martin Munk Hansen <hansen@martinmunk.com>  Thu, 06 Aug 2026 09:47:59 +0000
 

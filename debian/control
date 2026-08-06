@@ -2,7 +2,7 @@ Source: martinmunk-alsa-control-avr
 Section: sound
 Priority: optional
 Maintainer: Martin Munk Hansen <hansen@martinmunk.com>
-Build-Depends: debhelper-compat (= 12),
+Build-Depends: debhelper-compat (= 13),
  cmake,
  libasound2-dev
 Standards-Version: 4.6.0
