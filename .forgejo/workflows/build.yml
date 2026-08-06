@@ -39,57 +39,39 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install build tools
+      # Everything (deps + build + verify) in one traced, fully-logged step so
+      # that ANY failure point is captured to /tmp/build.log and shipped below.
+      - name: Build and verify (logged)
         run: |
-          apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file
-
-      - name: Add arm64 architecture and cross toolchain
-        if: matrix.arch == 'arm64'
-        run: |
-          dpkg --add-architecture arm64
-          apt-get update -qq
-          # native libasound2-dev too, so buildpackage.sh's dpkg-checkbuilddeps
-          # is satisfied and it doesn't fall into the mk-build-deps/equivs path
-          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libasound2-dev
-
-      - name: Install native build dependencies (amd64)
-        if: matrix.arch == 'amd64'
-        run: |
-          apt-get install -y -qq libasound2-dev
-
-      - name: Build package (buildpackage.sh stamps +debian<N><codename>)
-        run: |
-          set -o pipefail
-          if [ "${{ matrix.arch }}" != "$(dpkg --print-architecture)" ]; then
-            TARGET_ARCH=${{ matrix.arch }} ./buildpackage.sh 2>&1 | tee /tmp/build.log
-          else
-            ./buildpackage.sh 2>&1 | tee /tmp/build.log
-          fi
-          ls -lh build-deb/*.deb 2>&1 | tee -a /tmp/build.log
-
-      # This Forgejo instance does not serve Actions job logs afterwards, so
-      # ship the build output as an artifact to make failures diagnosable.
-      - name: Upload build log (diagnostic)
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: buildlog-${{ matrix.codename }}-${{ matrix.arch }}
-          path: /tmp/build.log
-
-      # Asserted in-job on purpose: a wrong/incomplete package must fail here.
-      - name: Verify built package
-        run: bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
+          {
+            set -ex
+            apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file
+            if [ "${{ matrix.arch }}" = "arm64" ]; then
+              dpkg --add-architecture arm64
+              apt-get update -qq
+              apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libasound2-dev
+            else
+              apt-get install -y -qq libasound2-dev
+            fi
+            if [ "${{ matrix.arch }}" != "$(dpkg --print-architecture)" ]; then
+              TARGET_ARCH=${{ matrix.arch }} ./buildpackage.sh
+            else
+              ./buildpackage.sh
+            fi
+            ls -lh build-deb/*.deb
+            bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
+          } 2>&1 | tee /tmp/build.log
+          exit ${PIPESTATUS[0]}
 
       # DIAGNOSTIC: artifact download + Actions logs are both inaccessible on
-      # this instance, so on failure push the captured build output to the
-      # generic package registry, which IS downloadable with a token.
+      # this instance, so on failure push the captured output to the generic
+      # package registry, which IS downloadable with a token.
       - name: Ship build log on failure
         if: failure()
         env:
           TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
           URL: ${{ github.server_url }}
         run: |
-          echo "--- shipping /tmp/build.log ---"
           ls -l /tmp/build.log || echo "(no build.log)"
           curl -f -H "Authorization: token $TOKEN" \
             --upload-file /tmp/build.log \
@@ -97,6 +79,7 @@ jobs:
             || echo "log upload failed"
 
       - name: Upload build artifacts
+        if: success()
         uses: actions/upload-artifact@v3
         with:
           name: martinmunk-alsa-control-avr-${{ matrix.codename }}-${{ matrix.arch }}
