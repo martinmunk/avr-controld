@@ -80,6 +80,22 @@ jobs:
       - name: Verify built package
         run: bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
 
+      # DIAGNOSTIC: artifact download + Actions logs are both inaccessible on
+      # this instance, so on failure push the captured build output to the
+      # generic package registry, which IS downloadable with a token.
+      - name: Ship build log on failure
+        if: failure()
+        env:
+          TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
+          URL: ${{ github.server_url }}
+        run: |
+          echo "--- shipping /tmp/build.log ---"
+          ls -l /tmp/build.log || echo "(no build.log)"
+          curl -f -H "Authorization: token $TOKEN" \
+            --upload-file /tmp/build.log \
+            "$URL/api/packages/${{ github.repository_owner }}/generic/ci-debug/r${{ github.run_number }}-${{ matrix.arch }}/build.log" \
+            || echo "log upload failed"
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v3
         with:
