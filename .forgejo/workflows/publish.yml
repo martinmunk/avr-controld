@@ -11,8 +11,11 @@ env:
   LANG: C.UTF-8
 
 jobs:
-  build:
-    name: Build (${{ matrix.arch }})
+  # Single job: build and publish in one go. actions/upload-artifact is
+  # unreliable on this runner, so we avoid the build->publish artifact handoff
+  # entirely and curl the freshly-built .deb straight to the registry.
+  build-and-publish:
+    name: Build & Publish (${{ matrix.arch }})
     runs-on: docker
     strategy:
       fail-fast: false
@@ -48,9 +51,8 @@ jobs:
         run: |
           dpkg --add-architecture arm64
           apt-get update -qq
-          # native libasound2-dev too, so buildpackage.sh's dpkg-checkbuilddeps
-          # is satisfied and it doesn't fall into the mk-build-deps/equivs path
-          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libasound2-dev
+          # libstdc++6:arm64 needed for dpkg-shlibdeps on the C++ objects
+          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libstdc++6:arm64 libasound2-dev
 
       - name: Install native build dependencies (amd64)
         if: matrix.arch == 'amd64'
@@ -69,58 +71,23 @@ jobs:
       - name: Verify built package
         run: bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: martinmunk-alsa-control-avr-${{ matrix.codename }}-${{ matrix.arch }}
-          path: build-deb/*.deb
-
-  publish:
-    name: Publish (${{ matrix.arch }})
-    needs: build
-    runs-on: docker
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            codename: trixie
-          - arch: arm64
-            codename: trixie
-
-    steps:
-      - name: Install curl
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq curl
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: martinmunk-alsa-control-avr-${{ matrix.codename }}-${{ matrix.arch }}
-          path: packages/
-
       - name: Publish to Forgejo Package Registry
         env:
           FORGEJO_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
           FORGEJO_URL: ${{ github.server_url }}
         run: |
           set -eu
-          PACKAGE_FILE=$(ls packages/*.deb | grep -v dbgsym | head -1)
+          PACKAGE_FILE=$(ls build-deb/*.deb | grep -v dbgsym | head -1)
           if [ -z "$PACKAGE_FILE" ]; then
-            echo "No package file found!"
-            exit 1
+            echo "No package file found!"; exit 1
           fi
-
           echo "=== Publishing to Forgejo Debian Repository ==="
           echo "File:         $PACKAGE_FILE"
           echo "Distribution: ${{ matrix.codename }}"
           echo "Component:    main"
           echo "Architecture: ${{ matrix.arch }}"
-
           curl -f -H "Authorization: token $FORGEJO_TOKEN" \
             --upload-file "$PACKAGE_FILE" \
             "$FORGEJO_URL/api/packages/${{ github.repository_owner }}/debian/pool/${{ matrix.codename }}/main/upload"
-
           echo ""
           echo "Successfully published $(basename "$PACKAGE_FILE")"

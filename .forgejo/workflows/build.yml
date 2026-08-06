@@ -39,34 +39,35 @@ jobs:
         with:
           fetch-depth: 0
 
-      # POSIX-safe (works under sh or bash): a subshell with set -e stops at the
-      # first failure and the outer `|| rc=$?` captures it; all output goes to
-      # /tmp/build.log. No bashisms (no PIPESTATUS / process substitution).
-      - name: Build and verify
+      - name: Install build tools
         run: |
-          rc=0
-          ( set -ex
-            apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file
-            if [ "${{ matrix.arch }}" = "arm64" ]; then
-              dpkg --add-architecture arm64
-              apt-get update -qq
-              apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libasound2-dev
-            else
-              apt-get install -y -qq libasound2-dev
-            fi
-            if [ "${{ matrix.arch }}" != "$(dpkg --print-architecture)" ]; then
-              TARGET_ARCH=${{ matrix.arch }} ./buildpackage.sh
-            else
-              ./buildpackage.sh
-            fi
-            ls -lh build-deb/*.deb
-            bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
-          ) > /tmp/build.log 2>&1 || rc=$?
-          tail -n 60 /tmp/build.log
-          exit $rc
+          apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file
 
-      - name: Ship build log on failure
-        if: failure()
+      - name: Add arm64 architecture and cross toolchain
+        if: matrix.arch == 'arm64'
         run: |
-          curl -f -X PUT --data-binary @/tmp/build.log \
-            "http://192.168.20.94:8099/r${{ github.run_number }}-${{ matrix.arch }}" || echo "post failed"
+          dpkg --add-architecture arm64
+          apt-get update -qq
+          # libstdc++6:arm64 is required for dpkg-shlibdeps to resolve the C++
+          # plugins/avr-power; native libasound2-dev too so buildpackage.sh's
+          # dpkg-checkbuilddeps passes without the mk-build-deps/equivs path.
+          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libstdc++6:arm64 libasound2-dev
+
+      - name: Install native build dependencies (amd64)
+        if: matrix.arch == 'amd64'
+        run: |
+          apt-get install -y -qq libasound2-dev
+
+      - name: Build package (buildpackage.sh stamps +debian<N><codename>)
+        run: |
+          if [ "${{ matrix.arch }}" != "$(dpkg --print-architecture)" ]; then
+            TARGET_ARCH=${{ matrix.arch }} ./buildpackage.sh
+          else
+            ./buildpackage.sh
+          fi
+          ls -lh build-deb/*.deb
+
+      # In-job assertion (this Forgejo instance serves no Actions logs, and
+      # upload-artifact is unreliable here, so correctness is proven here).
+      - name: Verify built package
+        run: bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
