@@ -1,3 +1,12 @@
+martinmunk-alsa-control-avr (0.2.6) stable; urgency=medium
+
+  * Install the ALSA plugins into the host arch's multiarch dir via
+    GNUInstallDirs (CMAKE_INSTALL_LIBDIR). The old detection hardcoded x86_64
+    and otherwise used /usr/lib/alsa-lib, so arm64/cross builds installed to a
+    directory libasound does not search.
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Fri, 07 Aug 2026 19:25:00 +0000
+
 martinmunk-alsa-control-avr (0.2.5) stable; urgency=medium
 
   * postinst: add the shairport-sync service user to the dialout group so the

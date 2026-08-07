@@ -73,15 +73,16 @@ target_compile_options(libasound_module_ctl_cec PRIVATE -Wall -Wextra -Wpedantic
 target_compile_definitions(libasound_module_ctl_cec PRIVATE PIC)
 
 # Installation
-# ALSA plugins typically go in /usr/lib/alsa-lib/ or /usr/lib/x86_64-linux-gnu/alsa-lib/
+# ALSA plugins must land in the HOST arch's multiarch alsa-lib dir, which is
+# where libasound actually searches on Debian (e.g.
+# /usr/lib/aarch64-linux-gnu/alsa-lib on arm64). GNUInstallDirs gives us
+# CMAKE_INSTALL_LIBDIR = lib/<triplet>, and debhelper sets it correctly for the
+# host arch (cross-safe). The old logic hardcoded x86_64 then fell back to
+# /usr/lib/alsa-lib, so arm64 and every cross build installed to a dir ALSA does
+# not search.
+include(GNUInstallDirs)
 if(NOT DEFINED ALSA_PLUGIN_DIR)
-    if(EXISTS "/usr/lib/x86_64-linux-gnu/alsa-lib")
-        set(ALSA_PLUGIN_DIR "/usr/lib/x86_64-linux-gnu/alsa-lib")
-    elseif(EXISTS "/usr/lib/alsa-lib")
-        set(ALSA_PLUGIN_DIR "/usr/lib/alsa-lib")
-    else()
-        set(ALSA_PLUGIN_DIR "${CMAKE_INSTALL_PREFIX}/lib/alsa-lib")
-    endif()
+    set(ALSA_PLUGIN_DIR "${CMAKE_INSTALL_FULL_LIBDIR}/alsa-lib")
 endif()
 
 message(STATUS "ALSA plugin will be installed to: ${ALSA_PLUGIN_DIR}")
