@@ -207,6 +207,11 @@ int main(int argc, char** argv) {
                 b.erase(0, pos + 1);
                 if (!line.empty() && line.back() == '\r') line.pop_back();
                 if (line.empty()) continue;
+                if (line == "SHUTDOWN") {          // graceful stop (systemd/tests)
+                    const char* ok = "OK\n"; ssize_t w = write(cfd, ok, 3); (void)w;
+                    unlink(sock.c_str());
+                    _exit(0);
+                }
                 if (!backend->is_connected()) backend->reconnect();   // best effort
                 std::string reply = dispatch(backend.get(), line) + "\n";
                 if (write(cfd, reply.data(), reply.size()) < 0) { /* client gone; cleaned up next loop */ }

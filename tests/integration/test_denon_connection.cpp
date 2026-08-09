@@ -108,7 +108,7 @@ TEST_F(DenonConnectionTest, QueryVolume) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    int vol = backend_->get_volume();
+    int vol = backend_->get_volume().value_or(-1);
     EXPECT_GE(vol, 0);
     EXPECT_LE(vol, 100);
 }
@@ -130,14 +130,14 @@ TEST_F(DenonConnectionTest, SetVolumeAbsolute) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    int original_vol = backend_->get_volume();
+    int original_vol = backend_->get_volume().value_or(-1);
     wait_for_command();
 
     // Set to 50%
     ASSERT_TRUE(backend_->set_volume_absolute(50));
     wait_for_command(500);
 
-    int read_vol = backend_->get_volume();
+    int read_vol = backend_->get_volume().value_or(-1);
     EXPECT_GE(read_vol, 45);  // Allow some tolerance
     EXPECT_LE(read_vol, 55);
 
@@ -150,20 +150,20 @@ TEST_F(DenonConnectionTest, SetVolumeMinMax) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    int original_vol = backend_->get_volume();
+    int original_vol = backend_->get_volume().value_or(-1);
     wait_for_command();
 
     // Test minimum (be careful with actual hardware!)
     ASSERT_TRUE(backend_->set_volume_absolute(10));
     wait_for_command(500);
-    int vol_min = backend_->get_volume();
+    int vol_min = backend_->get_volume().value_or(-1);
     EXPECT_GE(vol_min, 8);
     EXPECT_LE(vol_min, 12);
 
     // Test mid-range
     ASSERT_TRUE(backend_->set_volume_absolute(40));
     wait_for_command(500);
-    int vol_mid = backend_->get_volume();
+    int vol_mid = backend_->get_volume().value_or(-1);
     EXPECT_GE(vol_mid, 38);
     EXPECT_LE(vol_mid, 42);
 
@@ -176,19 +176,19 @@ TEST_F(DenonConnectionTest, VolumeUpDown) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    int original_vol = backend_->get_volume();
+    int original_vol = backend_->get_volume().value_or(-1);
     wait_for_command();
 
     // Volume up
     ASSERT_TRUE(backend_->volume_up());
     wait_for_command(300);
-    int vol_after_up = backend_->get_volume();
+    int vol_after_up = backend_->get_volume().value_or(-1);
     EXPECT_GT(vol_after_up, original_vol);
 
     // Volume down
     ASSERT_TRUE(backend_->volume_down());
     wait_for_command(300);
-    int vol_after_down = backend_->get_volume();
+    int vol_after_down = backend_->get_volume().value_or(-1);
     EXPECT_LT(vol_after_down, vol_after_up);
 
     // Restore original
@@ -200,7 +200,7 @@ TEST_F(DenonConnectionTest, VolumeInvalidRange) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    int original_vol = backend_->get_volume();
+    int original_vol = backend_->get_volume().value_or(-1);
 
     // Try to set out of range (should fail or clamp)
     backend_->set_volume_absolute(-10);
@@ -224,7 +224,7 @@ TEST_F(DenonConnectionTest, QueryMute) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    bool muted = backend_->get_mute();
+    bool muted = backend_->get_mute().value_or(false);
     // Just verify we can read it (could be either state)
     EXPECT_TRUE(muted == true || muted == false);
 }
@@ -233,13 +233,13 @@ TEST_F(DenonConnectionTest, SetMuteOn) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    bool original_mute = backend_->get_mute();
+    bool original_mute = backend_->get_mute().value_or(false);
     wait_for_command();
 
     // Mute
     ASSERT_TRUE(backend_->set_mute(true));
     wait_for_command(500);
-    EXPECT_TRUE(backend_->get_mute());
+    EXPECT_TRUE(backend_->get_mute().value_or(false));
 
     // Restore
     backend_->set_mute(original_mute);
@@ -250,13 +250,13 @@ TEST_F(DenonConnectionTest, SetMuteOff) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    bool original_mute = backend_->get_mute();
+    bool original_mute = backend_->get_mute().value_or(false);
     wait_for_command();
 
     // Unmute
     ASSERT_TRUE(backend_->set_mute(false));
     wait_for_command(500);
-    EXPECT_FALSE(backend_->get_mute());
+    EXPECT_FALSE(backend_->get_mute().value_or(true));
 
     // Restore
     backend_->set_mute(original_mute);
@@ -267,7 +267,7 @@ TEST_F(DenonConnectionTest, MuteToggle) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    bool original_mute = backend_->get_mute();
+    bool original_mute = backend_->get_mute().value_or(false);
     wait_for_command();
 
     // Toggle
@@ -290,7 +290,7 @@ TEST_F(DenonConnectionTest, QueryPower) {
     ASSERT_TRUE(init_backend());
 
     // If we're connected, power should be on
-    bool power = backend_->get_power();
+    bool power = backend_->get_power().value_or(false);
     EXPECT_TRUE(power);
 }
 
@@ -324,7 +324,7 @@ TEST_F(DenonConnectionTest, GetCurrentInput) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    std::string current = backend_->get_current_input();
+    std::string current = backend_->get_current_input().value_or("");
     EXPECT_FALSE(current.empty());
 }
 
@@ -332,7 +332,7 @@ TEST_F(DenonConnectionTest, SetInput) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    std::string original_input = backend_->get_current_input();
+    std::string original_input = backend_->get_current_input().value_or("");
     wait_for_command();
 
     // Try switching to a common input (that likely exists)
@@ -352,7 +352,7 @@ TEST_F(DenonConnectionTest, SetInput) {
         ASSERT_TRUE(backend_->set_input(test_input));
         wait_for_command(1000);  // Input switching takes time
 
-        std::string new_input = backend_->get_current_input();
+        std::string new_input = backend_->get_current_input().value_or("");
         EXPECT_EQ(new_input, test_input);
 
         // Restore original
@@ -370,7 +370,7 @@ TEST_F(DenonConnectionTest, InputAutoSwitchOnInit) {
 
     // First, initialize to get current input
     ASSERT_TRUE(init_backend());
-    std::string original_input = backend_->get_current_input();
+    std::string original_input = backend_->get_current_input().value_or("");
 
     // Set input to DVD (different from MPLAY which we'll auto-switch to)
     backend_->set_input("DVD");
@@ -413,7 +413,7 @@ TEST_F(DenonConnectionTest, ConnectionReuse) {
     SKIP_IF_NO_HARDWARE();
     // Create first backend instance
     ASSERT_TRUE(init_backend());
-    int vol1 = backend_->get_volume();
+    int vol1 = backend_->get_volume().value_or(-1);
     backend_->close();
     backend_.reset();
 
@@ -421,7 +421,7 @@ TEST_F(DenonConnectionTest, ConnectionReuse) {
 
     // Create second instance - should reuse connection
     ASSERT_TRUE(init_backend());
-    int vol2 = backend_->get_volume();
+    int vol2 = backend_->get_volume().value_or(-1);
 
     // State should be preserved
     EXPECT_EQ(vol1, vol2);
@@ -451,7 +451,7 @@ TEST_F(DenonConnectionTest, MultipleClientsSimultaneous) {
     EXPECT_TRUE(backend2->is_connected());
 
     // Volume changes from one should be visible to the other
-    int original = backend1->get_volume();
+    int original = backend1->get_volume().value_or(-1);
     backend1->set_volume_absolute(50);
     wait_for_command(500);
 
@@ -473,7 +473,7 @@ TEST_F(DenonConnectionTest, RapidVolumeChanges) {
     SKIP_IF_NO_HARDWARE();
     ASSERT_TRUE(init_backend());
 
-    int original = backend_->get_volume();
+    int original = backend_->get_volume().value_or(-1);
 
     // Rapidly change volume
     for (int i = 0; i < 10; i++) {
@@ -511,7 +511,7 @@ TEST_F(DenonConnectionTest, RepeatedConnectDisconnect) {
         ASSERT_TRUE(backend->init(config));
         EXPECT_TRUE(backend->is_connected());
 
-        int vol = backend->get_volume();
+        int vol = backend->get_volume().value_or(-1);
         EXPECT_GE(vol, 0);
         EXPECT_LE(vol, 100);
 

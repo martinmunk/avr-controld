@@ -139,16 +139,20 @@ install(FILES systemd/tmpfiles.d/avr-controld.conf
 )
 
 if(BUILD_TESTS)
-    # Fetch Google Test
-    include(FetchContent)
-    FetchContent_Declare(
-        googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG v1.14.0
-    )
-    # For Windows: Prevent overriding the parent project's compiler/linker settings
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(googletest)
+    # Prefer a system GoogleTest (libgtest-dev/libgmock-dev) so CI needn't clone
+    # from github; fall back to fetching it if not installed.
+    find_package(GTest QUIET)
+    if(NOT GTest_FOUND)
+        include(FetchContent)
+        FetchContent_Declare(
+            googletest
+            GIT_REPOSITORY https://github.com/google/googletest.git
+            GIT_TAG v1.14.0
+        )
+        # For Windows: Prevent overriding the parent project's compiler/linker settings
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(googletest)
+    endif()
 
     # Enable testing
     enable_testing()
@@ -186,4 +190,19 @@ if(BUILD_TESTS)
     )
 
     gtest_discover_tests(integration_tests)
+
+    # Broker tests: drive the real SocketClientBackend against an auto-spawned
+    # avr-controld + the mock Denon. Needs the mock harness/env, so it is NOT
+    # gtest_discover'd (run via tests/broker/run_broker_tests.sh instead).
+    add_executable(broker_tests
+        tests/broker/broker_tests.cpp
+        src/backends/socket_client.cpp
+    )
+    target_link_libraries(broker_tests
+        GTest::gtest_main
+        ${ALSA_LIBRARIES}
+        Threads::Threads
+    )
+    # broker_tests auto-spawns avr-controld, so make sure the daemon is built too
+    add_dependencies(broker_tests avr-controld)
 endif()

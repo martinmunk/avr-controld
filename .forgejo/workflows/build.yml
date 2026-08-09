@@ -71,3 +71,41 @@ jobs:
       # upload-artifact is unreliable here, so correctness is proven here).
       - name: Verify built package
         run: bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
+
+  tests:
+    name: Unit + Integration + Broker tests
+    runs-on: docker
+    container:
+      image: debian:trixie
+    steps:
+      - name: Install Node.js and git
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates curl
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build + test deps
+        run: |
+          apt-get install -y -qq cmake build-essential libasound2-dev python3 \
+            libgtest-dev libgmock-dev
+
+      - name: Configure + build (with tests)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+          cmake --build build -j"$(nproc)" \
+            --target unit_tests integration_tests broker_tests avr-controld
+
+      - name: Unit tests
+        run: ./build/unit_tests
+
+      - name: Integration tests (mock Denon)
+        run: bash tests/run_integration_tests.sh
+
+      - name: Broker tests (mock Denon + daemon, incl. shared-state + concurrency)
+        run: bash tests/broker/run_broker_tests.sh

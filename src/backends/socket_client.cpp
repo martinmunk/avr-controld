@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #include <map>
@@ -142,9 +143,11 @@ private:
         for (auto& s : args) argv.push_back(const_cast<char*>(s.c_str()));
         argv.push_back(nullptr);
 
+        const char* bin = ::getenv("AVR_CONTROLD_BIN");   // test / non-standard install override
         pid_t pid = fork();
         if (pid < 0) return;
         if (pid == 0) {
+            if (bin && *bin) execv(bin, argv.data());
             execvp("avr-controld", argv.data());
             execv("/usr/bin/avr-controld", argv.data());
             _exit(127);

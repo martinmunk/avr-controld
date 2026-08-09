@@ -30,14 +30,18 @@
 #include <string>
 #include <map>
 #include <cctype>
+#include <cstdlib>
 #include <sys/stat.h>
 
 namespace AlsaAVR {
 
 // Fixed socket directory. Shipped as a tmpfiles.d entry (0777) and best-effort
 // created here so both client and daemon always agree on the path regardless of
-// which user gets there first.
+// which user gets there first. AVR_SOCKET_DIR overrides it (for tests / non-root).
 inline std::string avr_socket_dir() {
+    if (const char* e = ::getenv("AVR_SOCKET_DIR")) {
+        if (*e) { ::mkdir(e, 0777); return e; }
+    }
     static const char* dir = "/run/avr-controld";
     ::mkdir(dir, 0777);   // best effort; ignore EEXIST / EACCES
     return dir;
