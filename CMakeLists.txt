@@ -31,7 +31,7 @@ set(CORE_SOURCES
 # Denon plugin
 add_library(libasound_module_ctl_denon SHARED
     src/plugins/alsa_plugin_denon.cpp
-    src/backends/denon_ip.cpp
+    src/backends/socket_client.cpp
     src/config.cpp
 )
 set_target_properties(libasound_module_ctl_denon PROPERTIES PREFIX "")
@@ -42,7 +42,7 @@ target_compile_definitions(libasound_module_ctl_denon PRIVATE PIC)
 # NAD plugin
 add_library(libasound_module_ctl_nad SHARED
     src/plugins/alsa_plugin_nad.cpp
-    src/backends/nad_serial.cpp
+    src/backends/socket_client.cpp
     src/config.cpp
 )
 set_target_properties(libasound_module_ctl_nad PROPERTIES PREFIX "")
@@ -53,7 +53,7 @@ target_compile_definitions(libasound_module_ctl_nad PRIVATE PIC)
 # Opalum plugin
 add_library(libasound_module_ctl_opalum SHARED
     src/plugins/alsa_plugin_opalum.cpp
-    src/backends/opalum_serial.cpp
+    src/backends/socket_client.cpp
     src/config.cpp
 )
 set_target_properties(libasound_module_ctl_opalum PROPERTIES PREFIX "")
@@ -64,7 +64,7 @@ target_compile_definitions(libasound_module_ctl_opalum PRIVATE PIC)
 # CEC plugin
 add_library(libasound_module_ctl_cec SHARED
     src/plugins/alsa_plugin_cec.cpp
-    src/backends/cec.cpp
+    src/backends/socket_client.cpp
     src/config.cpp
 )
 set_target_properties(libasound_module_ctl_cec PROPERTIES PREFIX "")
@@ -119,6 +119,23 @@ target_compile_options(avr-power PRIVATE -Wall -Wextra -Wpedantic -O2)
 
 install(TARGETS avr-power
     RUNTIME DESTINATION bin
+)
+
+# Connection broker daemon: owns the one real backend connection per device and
+# serves clients (the ALSA plugins, avr-power, amixer) over a Unix socket.
+add_executable(avr-controld
+    src/daemon/avr_controld.cpp
+    ${BACKEND_SOURCES}
+    ${CORE_SOURCES}
+)
+target_link_libraries(avr-controld ${ALSA_LIBRARIES} Threads::Threads)
+target_compile_options(avr-controld PRIVATE -Wall -Wextra -Wpedantic -O2)
+install(TARGETS avr-controld
+    RUNTIME DESTINATION bin
+)
+# tmpfiles.d entry so /run/avr-controld exists (0777) for cross-user sockets
+install(FILES systemd/tmpfiles.d/avr-controld.conf
+    DESTINATION lib/tmpfiles.d
 )
 
 if(BUILD_TESTS)
