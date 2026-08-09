@@ -1,3 +1,13 @@
+martinmunk-alsa-control-avr (0.3.0) stable; urgency=medium
+
+  * Add avr-controld: a single-owner connection broker. One daemon owns each
+    AVR connection (serial/TCP) and serves clients over a Unix socket; the
+    ALSA plugins become socket clients (SocketClientBackend) that auto-spawn
+    it. Fixes per-process connection scoping (serial contention, TCP churn,
+    no shared state). No plugin/avr-power source change.
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Sun, 09 Aug 2026 21:51:35 +0000
+
 martinmunk-alsa-control-avr (0.2.6) stable; urgency=medium
 
   * Install the ALSA plugins into the host arch's multiarch dir via
