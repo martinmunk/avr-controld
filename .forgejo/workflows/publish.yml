@@ -44,7 +44,7 @@ jobs:
 
       - name: Install build tools
         run: |
-          apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file
+          apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file pkg-config
 
       - name: Add arm64 architecture and cross toolchain
         if: matrix.arch == 'arm64'
@@ -52,12 +52,12 @@ jobs:
           dpkg --add-architecture arm64
           apt-get update -qq
           # libstdc++6:arm64 needed for dpkg-shlibdeps on the C++ objects
-          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libstdc++6:arm64 libasound2-dev
+          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libsystemd-dev:arm64 libstdc++6:arm64 libasound2-dev libsystemd-dev
 
       - name: Install native build dependencies (amd64)
         if: matrix.arch == 'amd64'
         run: |
-          apt-get install -y -qq libasound2-dev
+          apt-get install -y -qq libasound2-dev libsystemd-dev
 
       - name: Build package (buildpackage.sh stamps +debian<N><codename>)
         run: |

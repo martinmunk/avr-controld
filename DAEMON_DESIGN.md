@@ -78,3 +78,89 @@ or input control for days. Now:
   `Input Source Default` element, and applied per session by `avr-power on`.
 * Mock hooks `XDROP` / `XDROPOTHERS` (not Denon protocol) let the integration
   and broker tests kill the session under test.
+
+## shairport-sync D-Bus integration (0.3.1, optional)
+
+`avr-controld` can watch shairport-sync directly over D-Bus and orchestrate AVR
+power/input from real playback state, closing the loop the coarse
+`run_this_*_active_state` shell hooks cannot: the hooks fire `PWON` blindly and
+never confirm the receiver obeyed. This is **additive and off by default** --
+volume and mute stay entirely on the ALSA hardware-mixer path (hardware dB
+attenuation, mute-on-pause), which other consumers (amixer, avr-power, any
+renderer) rely on. D-Bus is only for events, metadata, and power/input.
+
+### Why sd-bus
+libsystemd is installed on every Debian 13 node (systemd is PID 1) and
+cross-installs as `libsystemd-dev:<arch>`, so it adds no real runtime
+dependency (`libsystemd0` is already present). It exposes one pollable fd
+(`sd_bus_get_fd`) that folds directly into the daemon's existing single poll()
+loop -- no glib main loop, no second thread. The bus fd is appended to the
+pollfd set each iteration and serviced before clients; it is never treated as a
+client socket.
+
+### D-Bus surface consumed (shairport-sync 5.2.1, system bus)
+* name `org.gnome.ShairportSync`, path `/org/gnome/ShairportSync`
+* `org.gnome.ShairportSync` prop `Active` (b) -- a client session is up
+* `org.gnome.ShairportSync.RemoteControl` props `PlayerState` (s: Playing/
+  Paused/Stopped), `Metadata` (a{sv}, xesam:title/artist/album), `ProgressString`
+* all delivered via `org.freedesktop.DBus.Properties.PropertiesChanged`; read
+  once at startup via `Get` so we are not blind until the first change.
+
+### Decision logic (SessionPolicy, pure + unit-tested)
+`include/avr_session_policy.hpp` turns the signal stream into AVR actions with
+no D-Bus/Backend deps (so it is unit-tested in isolation, tests/unit/
+test_session_policy.cpp):
+* PlayerState -> Playing: power on + select configured input, **once** (repeated
+  Playing signals are debounced, no re-thrash).
+* Paused / Stopped / session gone: arm a grace timer (default 120s), do not
+  power off yet -- a brief pause or track gap must not cycle the AVR.
+* grace elapses with no resume: power off. Resume before it cancels the timer.
+* session up alone (connected, not playing): nothing, so merely selecting the
+  device never powers the AVR on.
+
+### Verify-and-retry
+In `drive` mode the daemon does not trust a fire-and-forget `PWON`. After
+setting power+input it reads the receiver back (the live reads added earlier)
+and retries up to 4 times; the backend's own reconnect/backoff absorbs the
+~1s window where the receiver refuses telnet during power-on. Power-off never
+switches the input (an HDMI input on the way to standby is what drives the
+Denon/TV/Shield CEC wake cascade).
+
+### Configuration
+`dbus = off | observe | drive` (default `off`):
+* `off` -- no D-Bus; daemon behaves exactly as before.
+* `observe` -- connect, log play/pause + now-playing, never touch the AVR.
+* `drive` -- also power the AVR on/off with verification as above.
+`input` -- the input to select on play (already passed to the daemon).
+`dbus_off_grace` -- seconds to wait after stop before powering off (default 120).
+
+Because the daemon is normally auto-spawned by the ALSA client (whose args come
+from the asound conf and carry no `dbus=`), enable the feature per node by
+dropping keys in **/etc/avr-controld.conf** (`key=value` lines), which the
+daemon merges at startup for keys not already on the command line, e.g.:
+```
+dbus=drive
+dbus_off_grace=180
+```
+This file is host-global: on a node with several AVRs it applies to each
+daemon (these single-AVR Pis are the intended case). When `dbus=drive` is
+enabled, remove the `run_this_*_active_state` avr-power hooks from
+shairport-sync.conf so the two do not both drive power.
+
+Alternatively run the daemon from a systemd unit with explicit `-o dbus=drive`;
+the per-device flock means that daemon owns the AVR and the ALSA clients simply
+connect to it.
+
+### New socket verbs
+* `META` -> `OK title=..|artist=..|album=..|state=..|active=0/1|progress=..`
+* `PLAYSTATE` -> `OK Playing|Paused|Stopped|-`
+so a future display/MQTT consumer can read now-playing from the daemon. Both
+return `OK -` when D-Bus is off.
+
+### Test hook
+`AVR_DBUS_ADDRESS` makes the watcher open a given bus address instead of the
+system bus, so a fake shairport on a private `dbus-run-session` bus can drive it.
+The play/pause->power state machine has full unit coverage; the sd-bus decode
+and the verify-retry orchestration were validated live against the real
+shairport-sync 5.2.1 + Denon on StueTaerten (observe mode: correct decode of
+now-playing/PlayerState/Active and the META/PLAYSTATE verbs, AVR untouched).

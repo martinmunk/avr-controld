@@ -41,7 +41,7 @@ jobs:
 
       - name: Install build tools
         run: |
-          apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file
+          apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file pkg-config
 
       - name: Add arm64 architecture and cross toolchain
         if: matrix.arch == 'arm64'
@@ -51,12 +51,12 @@ jobs:
           # libstdc++6:arm64 is required for dpkg-shlibdeps to resolve the C++
           # plugins/avr-power; native libasound2-dev too so buildpackage.sh's
           # dpkg-checkbuilddeps passes without the mk-build-deps/equivs path.
-          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libstdc++6:arm64 libasound2-dev
+          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libsystemd-dev:arm64 libstdc++6:arm64 libasound2-dev libsystemd-dev
 
       - name: Install native build dependencies (amd64)
         if: matrix.arch == 'amd64'
         run: |
-          apt-get install -y -qq libasound2-dev
+          apt-get install -y -qq libasound2-dev libsystemd-dev
 
       - name: Build package (buildpackage.sh stamps +debian<N><codename>)
         run: |
@@ -92,7 +92,7 @@ jobs:
 
       - name: Install build + test deps
         run: |
-          apt-get install -y -qq cmake build-essential libasound2-dev python3 \
+          apt-get install -y -qq cmake build-essential libasound2-dev libsystemd-dev pkg-config python3 \
             libgtest-dev libgmock-dev
 
       - name: Configure + build (with tests)

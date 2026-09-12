@@ -8,6 +8,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(ALSA REQUIRED)
 find_package(Threads REQUIRED)
 
+# sd-bus (libsystemd) for the optional shairport-sync D-Bus integration in
+# avr-controld. Present on every Debian 13 node and cross-installable as
+# libsystemd-dev:<arch>, so it costs no extra runtime dependency in practice.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+
 # Include directories
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
@@ -125,10 +131,12 @@ install(TARGETS avr-power
 # serves clients (the ALSA plugins, avr-power, amixer) over a Unix socket.
 add_executable(avr-controld
     src/daemon/avr_controld.cpp
+    src/daemon/shairport_dbus.cpp
     ${BACKEND_SOURCES}
     ${CORE_SOURCES}
 )
-target_link_libraries(avr-controld ${ALSA_LIBRARIES} Threads::Threads)
+target_include_directories(avr-controld PRIVATE ${SYSTEMD_INCLUDE_DIRS})
+target_link_libraries(avr-controld ${ALSA_LIBRARIES} Threads::Threads ${SYSTEMD_LIBRARIES})
 target_compile_options(avr-controld PRIVATE -Wall -Wextra -Wpedantic -O2)
 install(TARGETS avr-controld
     RUNTIME DESTINATION bin
@@ -161,6 +169,7 @@ if(BUILD_TESTS)
     add_executable(unit_tests
         tests/unit/test_denon_protocol.cpp
         tests/unit/test_volume_scaling.cpp
+        tests/unit/test_session_policy.cpp
         src/backends/denon_ip.cpp
         src/config.cpp
     )

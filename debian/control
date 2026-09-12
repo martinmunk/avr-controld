@@ -4,7 +4,9 @@ Priority: optional
 Maintainer: Martin Munk Hansen <hansen@martinmunk.com>
 Build-Depends: debhelper-compat (= 13),
  cmake,
- libasound2-dev
+ pkg-config,
+ libasound2-dev,
+ libsystemd-dev
 Standards-Version: 4.6.0
 Homepage: http://forgejo.servers.vejen.loc.martinmunk.com:3000/martinmunk/alsa-avr-control
 

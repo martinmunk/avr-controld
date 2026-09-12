@@ -6,9 +6,19 @@
 // (see include/avr_protocol.hpp) on a Unix socket. One daemon per physical
 // device, enforced by an flock on "<socket>.lock". Single-threaded poll loop, so
 // all client access is serialized on the wire.
+//
+// Optionally (config `dbus=observe|drive`) it also watches shairport-sync over
+// D-Bus and, in `drive` mode, powers the AVR on and selects the configured
+// input when playback starts -- verifying the receiver actually got there via
+// its own live reads and retrying -- and powers it off after a grace period
+// once playback stops. This is additive: with `dbus=off` (the default) the
+// daemon behaves exactly as before, and the ALSA/volume path is never touched.
 
 #include "../../include/backend.hpp"
 #include "../../include/avr_protocol.hpp"
+#include "../../include/logger.hpp"
+#include "../../include/avr_session_policy.hpp"
+#include "../../include/shairport_dbus.hpp"
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -17,12 +27,14 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <poll.h>
+#include <time.h>
 #include <csignal>
 #include <cstring>
 #include <cstdlib>
 #include <string>
 #include <vector>
 #include <map>
+#include <fstream>
 #include <sstream>
 #include <optional>
 
@@ -129,6 +141,72 @@ static void daemonize() {
     if (chdir("/") != 0) { /* ignore */ }
 }
 
+// ---- time helpers --------------------------------------------------------
+static int64_t mono_sec()  { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec; }
+static uint64_t mono_usec(){ struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+                             return (uint64_t)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000ULL; }
+
+// Optional host-global config file (key=value). Lets an auto-spawned daemon be
+// switched into D-Bus mode without changing the ALSA conf schema: drop e.g.
+// "dbus=drive" in /etc/avr-controld.conf. Only fills keys not already set on the
+// command line. Host-global: on a node with multiple AVRs it applies to each
+// daemon; these single-AVR Pis are the intended case.
+static void merge_config_file(std::map<std::string, std::string>& cfg, const char* path) {
+    std::ifstream f(path);
+    if (!f) return;
+    std::string line;
+    while (std::getline(f, line)) {
+        auto h = line.find('#'); if (h != std::string::npos) line = line.substr(0, h);
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        auto trim = [](std::string s) {
+            size_t a = s.find_first_not_of(" \t\r\n");
+            size_t b = s.find_last_not_of(" \t\r\n");
+            return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+        };
+        std::string k = trim(line.substr(0, eq)), v = trim(line.substr(eq + 1));
+        if (!k.empty() && cfg.find(k) == cfg.end()) cfg[k] = v;
+    }
+}
+
+// Ensure the AVR is powered on and on `want_input`, verifying via live reads and
+// retrying (the backend's own reconnect/backoff handles a session dropped during
+// power-on). Returns true once confirmed.
+static bool ensure_power_and_input(Backend* be, const std::string& want_input, Logger& log) {
+    for (int attempt = 1; attempt <= 4; ++attempt) {
+        if (!be->is_connected()) be->reconnect();
+        be->set_power(true);
+        if (!want_input.empty()) be->set_input(want_input);
+        auto p  = be->get_power();
+        auto in = be->get_current_input();
+        bool power_ok = p.value_or(false);
+        bool input_ok = want_input.empty() || (in && *in == want_input);
+        if (power_ok && input_ok) {
+            log.info("D-Bus: AVR confirmed on" +
+                     (want_input.empty() ? std::string() : " + input=" + want_input) +
+                     " (attempt " + std::to_string(attempt) + ")");
+            return true;
+        }
+        log.warn("D-Bus: power/input not confirmed yet (power=" +
+                 std::string(power_ok ? "1" : "0") + " input=" + (in ? *in : "?") +
+                 "), retry " + std::to_string(attempt));
+        usleep(700 * 1000);
+    }
+    log.error("D-Bus: gave up confirming power/input after 4 attempts");
+    return false;
+}
+
+// Power the AVR off. Deliberately does NOT change the input: switching to a
+// (likely HDMI) input on the way to standby is what drives the CEC wake cascade
+// on the Denon/TV/Shield bus, so we leave it as is.
+static void power_off_avr(Backend* be, Logger& log) {
+    if (!be->is_connected()) be->reconnect();
+    be->set_power(false);
+    auto p = be->get_power();
+    if (p && !*p) log.info("D-Bus: AVR powered off (input left as is)");
+    else          log.warn("D-Bus: power-off not confirmed");
+}
+
 int main(int argc, char** argv) {
     std::string type, socket_override;
     std::map<std::string, std::string> config;
@@ -146,6 +224,8 @@ int main(int argc, char** argv) {
     }
     if (type.empty()) { fprintf(stderr, "avr-controld: --type required\n"); return 2; }
 
+    merge_config_file(config, "/etc/avr-controld.conf");
+
     std::string sock = socket_override.empty() ? avr_socket_path(type, config) : socket_override;
     std::string lockpath = sock + ".lock";
 
@@ -162,6 +242,45 @@ int main(int argc, char** argv) {
     if (!backend) { fprintf(stderr, "avr-controld: unknown backend %s\n", type.c_str()); return 1; }
     if (!backend->init(config)) { fprintf(stderr, "avr-controld: backend init failed\n"); return 1; }
 
+    // Daemon-level logger, sharing the backend's log file/level so D-Bus and AVR
+    // lines interleave in one place.
+    Logger log;
+    log.init(config.count("log_file") ? config.at("log_file") : "",
+             config.count("log_level") ? config.at("log_level") : "INFO");
+
+    // ---- optional shairport-sync D-Bus watcher --------------------------
+    // dbus = off (default) | observe (log only) | drive (also power the AVR)
+    std::string dbus_mode = config.count("dbus") ? config.at("dbus") : "off";
+    std::string want_input = config.count("input") ? config.at("input") : "";
+    int off_grace = config.count("dbus_off_grace") ? atoi(config.at("dbus_off_grace").c_str()) : 120;
+    if (off_grace <= 0) off_grace = 120;
+
+    ShairportWatcher watcher(log);
+    SessionPolicy policy(off_grace);
+    bool dbus_on = false;
+    if (dbus_mode == "observe" || dbus_mode == "drive") {
+        dbus_on = watcher.connect();   // false if the system bus is unavailable
+        if (dbus_on) {
+            const bool drive = (dbus_mode == "drive");
+            log.info(std::string("D-Bus: mode=") + dbus_mode +
+                     (drive ? (" input=" + (want_input.empty() ? std::string("(none)") : want_input) +
+                               " off_grace=" + std::to_string(off_grace) + "s") : ""));
+            watcher.set_signal_handler([&](SessionSignal sig) {
+                AvrAction act = policy.feed(sig, mono_sec());
+                if (act == AvrAction::None) return;
+                if (!drive) {
+                    log.info(std::string("D-Bus (observe): would ") +
+                             (act == AvrAction::PowerOnSelectInput ? "power on + select input" : "power off"));
+                    return;
+                }
+                if (act == AvrAction::PowerOnSelectInput) ensure_power_and_input(backend.get(), want_input, log);
+                else if (act == AvrAction::PowerOff)      power_off_avr(backend.get(), log);
+            });
+        } else {
+            log.warn("D-Bus: requested but unavailable; running ALSA-only as usual");
+        }
+    }
+
     int lsock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (lsock < 0) return 1;
     struct sockaddr_un addr;
@@ -177,16 +296,57 @@ int main(int argc, char** argv) {
     listen(lsock, 16);
 
     // ---- poll loop -------------------------------------------------------
+    // Persistent set: [0]=lsock, then client fds. The D-Bus fd (if any) is
+    // appended per iteration and handled separately, never treated as a client.
     std::vector<struct pollfd> fds;
     fds.push_back({lsock, POLLIN, 0});
     std::map<int, std::string> inbuf;   // per-client read buffer
 
     while (true) {
-        int n = poll(fds.data(), fds.size(), -1);
+        int busfd = dbus_on ? watcher.fd() : -1;
+
+        std::vector<struct pollfd> pfds = fds;              // lsock + clients
+        size_t busslot = (size_t)-1;
+        if (busfd >= 0) { busslot = pfds.size(); pfds.push_back({busfd, watcher.poll_events(), 0}); }
+
+        // Bound the wait by the D-Bus timeout and the policy's pending power-off.
+        int timeout_ms = -1;
+        if (busfd >= 0) {
+            uint64_t tv = watcher.timeout_usec();
+            if (tv != UINT64_MAX) {
+                uint64_t now = mono_usec();
+                int64_t ms = tv <= now ? 0 : (int64_t)((tv - now) / 1000);
+                timeout_ms = (int)ms;
+            }
+        }
+        if (dbus_on) {
+            if (auto dl = policy.next_deadline()) {
+                int64_t secs = *dl - mono_sec();
+                int ms = secs <= 0 ? 0 : (int)(secs * 1000);
+                if (timeout_ms < 0 || ms < timeout_ms) timeout_ms = ms;
+            }
+        }
+
+        int n = poll(pfds.data(), pfds.size(), timeout_ms);
         if (n < 0) { if (errno == EINTR) continue; break; }
 
-        for (size_t i = 0; i < fds.size(); ++i) {
-            if (!(fds[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+        // Service the bus first (also on timeout, for its own timers), then run
+        // the policy's grace-timer.
+        if (busfd >= 0) {
+            watcher.process();
+            AvrAction act = policy.tick(mono_sec());
+            if (act == AvrAction::PowerOff && dbus_mode == "drive")
+                power_off_avr(backend.get(), log);
+            else if (act == AvrAction::PowerOff)
+                log.info("D-Bus (observe): would power off (grace elapsed)");
+        }
+
+        // Handle lsock + clients using the persistent-portion revents. Defer
+        // closes so erasing never desyncs the pfds<->fds index mapping.
+        size_t nfds = fds.size();
+        std::vector<int> to_close;
+        for (size_t i = 0; i < nfds; ++i) {
+            if (!(pfds[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
 
             if (fds[i].fd == lsock) {
                 int c = accept(lsock, nullptr, nullptr);
@@ -197,7 +357,7 @@ int main(int argc, char** argv) {
             int cfd = fds[i].fd;
             char buf[1024];
             ssize_t r = read(cfd, buf, sizeof(buf));
-            if (r <= 0) { close(cfd); inbuf.erase(cfd); fds.erase(fds.begin() + i); --i; continue; }
+            if (r <= 0) { to_close.push_back(cfd); continue; }
 
             std::string& b = inbuf[cfd];
             b.append(buf, r);
@@ -208,14 +368,31 @@ int main(int argc, char** argv) {
                 if (!line.empty() && line.back() == '\r') line.pop_back();
                 if (line.empty()) continue;
                 if (line == "SHUTDOWN") {          // graceful stop (systemd/tests)
-                    const char* ok = "OK\n"; ssize_t w = write(cfd, ok, 3); (void)w;
+                    const char* okmsg = "OK\n"; ssize_t w = write(cfd, okmsg, 3); (void)w;
                     unlink(sock.c_str());
                     _exit(0);
                 }
-                if (!backend->is_connected()) backend->reconnect();   // best effort
-                std::string reply = dispatch(backend.get(), line) + "\n";
-                if (write(cfd, reply.data(), reply.size()) < 0) { /* client gone; cleaned up next loop */ }
+                std::string reply;
+                if (line == "META") {              // now-playing snapshot (D-Bus)
+                    reply = dbus_on ? "OK " + watcher.snapshot() : "OK -";
+                } else if (line == "PLAYSTATE") {
+                    reply = dbus_on ? "OK " + (watcher.player_state().empty() ? std::string("-")
+                                                                              : watcher.player_state())
+                                    : "OK -";
+                } else {
+                    if (!backend->is_connected()) backend->reconnect();   // best effort
+                    reply = dispatch(backend.get(), line);
+                }
+                reply += "\n";
+                if (write(cfd, reply.data(), reply.size()) < 0) { /* client gone; cleaned up below */ }
             }
+        }
+
+        for (int fd : to_close) {
+            close(fd);
+            inbuf.erase(fd);
+            for (auto it = fds.begin(); it != fds.end(); ++it)
+                if (it->fd == fd) { fds.erase(it); break; }
         }
     }
     return 0;

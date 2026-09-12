@@ -15,6 +15,17 @@ martinmunk-alsa-control-avr (0.3.1) stable; urgency=medium
     the input back when it is about to power off, for the same reason.
   * Tests: mock XDROP/XDROPOTHERS hooks; reconnect, live-read and
     configured-input tests at integration and broker level.
+  * avr-controld: optional shairport-sync D-Bus integration (sd-bus). With
+    config "dbus=drive" the daemon watches shairport's play/pause and
+    now-playing metadata on the system bus and, when playback starts, powers
+    the AVR on and selects the configured input -- verifying via its own live
+    reads that the receiver actually got there and retrying -- then powers off
+    after a grace period (default 120s) once playback stops, so brief pauses
+    and track gaps do not thrash the receiver. "dbus=observe" logs the events
+    without touching the AVR; "dbus=off" (the default) is unchanged behaviour.
+    Enable per node via /etc/avr-controld.conf. The ALSA volume/mute path is
+    untouched. New socket verbs META and PLAYSTATE expose now-playing.
+    New build dep: libsystemd-dev (runtime libsystemd0, already present).
 
  -- Martin Munk Hansen <hansen@martinmunk.com>  Sat, 12 Sep 2026 11:00:00 +0000
 

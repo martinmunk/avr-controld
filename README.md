@@ -250,6 +250,32 @@ Interactive commands:
 - `q` - Query current state
 - `x` - Exit
 
+## shairport-sync D-Bus integration (optional)
+
+`avr-controld` can watch shairport-sync over D-Bus and power the AVR on/off from
+real playback, instead of the coarse `run_this_*_active_state` shell hooks. It
+powers on and selects the configured input when playback starts (verifying via
+its own live reads and retrying), and powers off after a grace period once
+playback stops, so brief pauses do not cycle the receiver. It also caches
+now-playing metadata for a future display or MQTT bridge.
+
+This is **off by default** and additive: volume and mute stay on the ALSA
+hardware mixer. Enable it per node by creating `/etc/avr-controld.conf`:
+
+```
+# off (default) | observe (log only, never touch the AVR) | drive
+dbus=drive
+# seconds after playback stops before powering the AVR off (default 120)
+dbus_off_grace=180
+```
+
+With `dbus=drive`, remove the `run_this_before/after_active_state` avr-power
+lines from `shairport-sync.conf` so both do not drive power. Start with
+`dbus=observe` to confirm the daemon's log shows your play/pause and now-playing
+before letting it control the receiver. Requires shairport-sync built with
+D-Bus (`-dbus` in `shairport-sync -V`). See `DAEMON_DESIGN.md` for details and
+the `META` / `PLAYSTATE` socket verbs.
+
 ## Architecture
 
 ```
