@@ -35,6 +35,7 @@ namespace AlsaAVR {
 class ShairportWatcher {
 public:
     using SignalHandler = std::function<void(SessionSignal)>;
+    using VolumeHandler = std::function<void(double)>;   // AirPlay dB (-144=mute)
 
     explicit ShairportWatcher(Logger& logger) : logger_(logger) {}
     ~ShairportWatcher();
@@ -58,6 +59,17 @@ public:
     void process();
 
     void set_signal_handler(SignalHandler h) { on_signal_ = std::move(h); }
+    void set_volume_handler(VolumeHandler h) { on_volume_ = std::move(h); }
+
+    // Write shairport's AirPlay volume (dB; -144 = mute). With shairport's
+    // ignore_volume_control=yes this does NOT touch the receiver; it only moves
+    // shairport's own volume, which it reports up to the AirPlay sender (so the
+    // phone slider follows). Returns false if the bus/write failed.
+    bool set_volume_db(double db);
+
+    // Cached AirPlay volume (dB); has_volume() is false until first seen.
+    double volume() const { return volume_; }
+    bool has_volume() const { return has_volume_; }
 
     // Cached now-playing state (updated as PropertiesChanged arrives).
     bool active() const { return active_; }
@@ -78,13 +90,17 @@ private:
     // Apply a new PlayerState string, emitting the matching signal on change.
     void apply_player_state(const std::string& s);
     void apply_active(bool a);
+    void apply_volume(double v);
 
     Logger& logger_;
     sd_bus* bus_ = nullptr;
     sd_bus_slot* slot_ = nullptr;
     SignalHandler on_signal_;
+    VolumeHandler on_volume_;
 
     bool active_ = false;
+    double volume_ = 0.0;
+    bool has_volume_ = false;
     std::string player_state_;
     std::string title_, artist_, album_, progress_;
 };

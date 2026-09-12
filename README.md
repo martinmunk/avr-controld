@@ -276,6 +276,33 @@ before letting it control the receiver. Requires shairport-sync built with
 D-Bus (`-dbus` in `shairport-sync -V`). See `DAEMON_DESIGN.md` for details and
 the `META` / `PLAYSTATE` socket verbs.
 
+### Bidirectional volume sync (optional)
+
+`avr-controld` can also keep the AirPlay volume and the receiver's volume/mute in
+step in both directions -- so changing volume from the AVR remote, HDMI-CEC or
+Home Assistant moves the phone's AirPlay slider, and vice versa -- while the
+audio stays full-range digital (the receiver does the attenuation, best quality).
+
+**This is off by default.** To enable it, shairport-sync must be told NOT to
+attenuate, so the daemon owns the receiver's volume:
+
+```
+# in shairport-sync.conf, general { }:
+ignore_volume_control = "yes";
+```
+```
+# in /etc/avr-controld.conf:
+volume_sync=on
+max_volume=60          # hard cap (0-100) the daemon will ever set from AirPlay
+volume_coalesce_ms=150 # smooth fast slider drags
+```
+
+`max_volume` is a safety ceiling: a phone at full slider can never drive the AVR
+past it. Do NOT set `ignore_volume_control=yes` WITHOUT `volume_sync=on`, or the
+AVR would play at full scale with nothing controlling it. Requires shairport-sync
+built with D-Bus. See `DAEMON_DESIGN.md` for the mapping, echo suppression and
+current testing status.
+
 ## Architecture
 
 ```

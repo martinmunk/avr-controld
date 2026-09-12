@@ -209,6 +209,38 @@ class DenonMockServer:
                             # kill the connection held by a backend/daemon under test).
                             if command == "XDROP":
                                 return
+                            # XPUSHMV <val> / XPUSHMU <0|1>: simulate the receiver's
+                            # volume/mute being changed by its remote/HDMI-CEC/another
+                            # controller -- set the state and BROADCAST the resulting
+                            # status line unsolicited to every connected client (as a
+                            # real Denon pushes to all telnet sessions).
+                            if command.startswith("XPUSHMV"):
+                                try:
+                                    val = int(command[7:].strip())
+                                except ValueError:
+                                    val = None
+                                if val is not None:
+                                    with self.receiver.lock:
+                                        self.receiver.volume = max(0, min(val, self.receiver.max_volume))
+                                        v = self.receiver.volume
+                                    msg = f"MV{v:02d}\r".encode('ascii')
+                                    with self.clients_lock:
+                                        targets = list(self.clients)
+                                    for c in targets:
+                                        try: c.sendall(msg)
+                                        except OSError: pass
+                                continue
+                            if command.startswith("XPUSHMU"):
+                                on = command[7:].strip() in ("1", "ON", "on")
+                                with self.receiver.lock:
+                                    self.receiver.muted = on
+                                msg = (b"MUON\r" if on else b"MUOFF\r")
+                                with self.clients_lock:
+                                    targets = list(self.clients)
+                                for c in targets:
+                                    try: c.sendall(msg)
+                                    except OSError: pass
+                                continue
                             if command == "XDROPOTHERS":
                                 with self.clients_lock:
                                     others = [c for c in self.clients if c is not client_socket]

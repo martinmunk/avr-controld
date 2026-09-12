@@ -170,6 +170,7 @@ if(BUILD_TESTS)
         tests/unit/test_denon_protocol.cpp
         tests/unit/test_volume_scaling.cpp
         tests/unit/test_session_policy.cpp
+        tests/unit/test_volume_sync.cpp
         src/backends/denon_ip.cpp
         src/config.cpp
     )

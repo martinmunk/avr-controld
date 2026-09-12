@@ -642,6 +642,67 @@ TEST_F(DenonConnectionTest, MissingConfig) {
 // Main
 // ============================================================================
 
+// ============================================================================
+// Unsolicited push path (volume-sync feed): event_fd() + pump_events()
+// ============================================================================
+
+// Wait up to `ms` for the backend's push fd to become readable, then consume.
+static AlsaAVR::AvrPush drain_push(AlsaAVR::Backend* be, int ms) {
+    int fd = be->event_fd();
+    if (fd >= 0) {
+        struct timeval tv { ms / 1000, (ms % 1000) * 1000 };
+        fd_set r; FD_ZERO(&r); FD_SET(fd, &r);
+        select(fd + 1, &r, nullptr, nullptr, &tv);
+    }
+    return be->pump_events();
+}
+
+// An external volume change on the receiver (remote/CEC) is pushed to our telnet
+// session; pump_events() must report it so the daemon can reflect it to AirPlay.
+TEST_F(DenonConnectionTest, PumpEventsReportsExternalVolumePush) {
+    SKIP_IF_NO_HARDWARE();
+    ASSERT_TRUE(init_backend());
+    ASSERT_GE(backend_->event_fd(), 0);
+    drain_push(backend_.get(), 200);                 // clear anything pending
+
+    ASSERT_TRUE(raw_avr_command(test_host_, test_port_, "XPUSHMV 40"));
+    AlsaAVR::AvrPush p = drain_push(backend_.get(), 800);
+    ASSERT_TRUE(p.volume.has_value());
+    int hwmax = backend_->get_hardware_max_volume();
+    int expect = (40 * 100 + hwmax / 2) / hwmax;     // MV40 -> percent
+    EXPECT_LE(std::abs(*p.volume - expect), 2);
+}
+
+// An external mute change is likewise reported.
+TEST_F(DenonConnectionTest, PumpEventsReportsExternalMutePush) {
+    SKIP_IF_NO_HARDWARE();
+    ASSERT_TRUE(init_backend());
+    drain_push(backend_.get(), 200);
+
+    ASSERT_TRUE(raw_avr_command(test_host_, test_port_, "XPUSHMU 1"));
+    AlsaAVR::AvrPush p = drain_push(backend_.get(), 800);
+    ASSERT_TRUE(p.mute.has_value());
+    EXPECT_TRUE(*p.mute);
+
+    ASSERT_TRUE(raw_avr_command(test_host_, test_port_, "XPUSHMU 0"));
+    p = drain_push(backend_.get(), 800);
+    ASSERT_TRUE(p.mute.has_value());
+    EXPECT_FALSE(*p.mute);
+}
+
+// A push arriving must not corrupt a subsequent query response (the shared
+// line buffer must keep the two straight).
+TEST_F(DenonConnectionTest, QueryStillWorksAfterPush) {
+    SKIP_IF_NO_HARDWARE();
+    ASSERT_TRUE(init_backend());
+    ASSERT_TRUE(backend_->set_volume_absolute(30));
+    ASSERT_TRUE(raw_avr_command(test_host_, test_port_, "XPUSHMV 55"));
+    wait_for_command(300);
+    auto v = backend_->get_volume();                 // must return a sane percent
+    ASSERT_TRUE(v.has_value());
+    EXPECT_GE(*v, 0); EXPECT_LE(*v, 100);
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
 

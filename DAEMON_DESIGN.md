@@ -164,3 +164,61 @@ The play/pause->power state machine has full unit coverage; the sd-bus decode
 and the verify-retry orchestration were validated live against the real
 shairport-sync 5.2.1 + Denon on StueTaerten (observe mode: correct decode of
 now-playing/PlayerState/Active and the META/PLAYSTATE verbs, AVR untouched).
+
+## Volume sync (shairport `.Volume` <-> AVR volume/mute, bidirectional)
+
+`volume_sync = on` (default `off`) makes the daemon the single hub that keeps the
+AirPlay volume and the receiver's volume/mute in step in BOTH directions, while
+the audio stays full-range digital (the receiver does the attenuation).
+
+### Required shairport setting
+Set `ignore_volume_control = "yes"` in `shairport-sync.conf`. shairport then
+outputs full-scale and does NOT drive the hardware mixer itself; it still tracks
+the AirPlay volume and exposes it, writable, on D-Bus (`org.gnome.ShairportSync`
+`.Volume`, a dB value, `-144` = mute). avr-controld owns the receiver's
+attenuation. Without this, shairport and the daemon would both drive the AVR.
+
+### Flow
+* **Phone -> AVR:** the watcher's `Volume` handler feeds `VolumeSync::on_airplay_db`.
+  AirPlay dB (`-30..0`, `-144`=mute) maps to 0-100 percent (see `volume_map.hpp`),
+  clamped to `max_volume`, and is sent to the receiver -- coalesced and
+  rate-limited (`volume_coalesce_ms`, default 150 ms) so a fast slider drag
+  chases the latest target instead of queuing stale `MV` commands.
+* **AVR -> phone:** the Denon telnet socket is folded into the poll loop
+  (`Backend::event_fd()`); when it is readable the daemon calls
+  `Backend::pump_events()`, which classifies the receiver's unsolicited
+  `MVxx`/`MUON`/`MUOFF` pushes (from its remote, HDMI-CEC or another controller)
+  and reports the change. The daemon maps it back to dB and writes shairport's
+  `.Volume`, which shairport reports to the sender so the phone slider follows.
+* **Echo suppression:** `VolumeSync` remembers each value it pushes to a side and
+  consumes the one matching echo that comes back, so a change is never bounced to
+  the side it came from (this is what would otherwise oscillate / feel jerky).
+
+### Safety
+`max_volume` (0-100, default 60) hard-caps the percent the daemon will ever set
+on the receiver from AirPlay, so a phone at full slider cannot drive the AVR to a
+dangerous level. On playback start the daemon snaps the receiver to the phone's
+current volume (capped) so the first note is at a safe, known level.
+
+### Async design
+Still a single-threaded `poll()` loop: the sd-bus fd and the Denon telnet fd are
+both folded into it (plus a timer for the coalesce flush). No boost-asio and no
+new thread -- boost would be a heavy dependency for a single-connection daemon,
+and sd-bus already integrates with the existing loop; sd-event (libsystemd) would
+be the natural choice only if this grew much larger.
+
+### Config keys
+`volume_sync` (off|on), `max_volume` (0-100, default 60),
+`volume_coalesce_ms` (default 150), `airplay_min_db` (default -30.0). Read from
+`-o key=value` or `/etc/avr-controld.conf`. `volume_sync=on` implies a D-Bus
+connection; if the bus is unavailable the daemon logs and runs ALSA-only.
+
+### Testing status
+`volume_map` and the `VolumeSync` echo-suppression/coalescing state machine have
+full unit coverage; the `event_fd()`/`pump_events()` push path and no-corruption-
+after-push are covered by integration tests against the mock (which grows
+`XPUSHMV`/`XPUSHMU` hooks to inject an external change). End-to-end with a real
+phone is NOT yet confirmed, because pyatv cannot open a streaming session against
+this shairport AP2 build; the D-Bus write path was verified live (writing
+`.Volume` round-trips and, with `ignore_volume_control=yes`, does not move the
+Denon).

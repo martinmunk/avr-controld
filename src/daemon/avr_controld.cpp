@@ -19,6 +19,8 @@
 #include "../../include/logger.hpp"
 #include "../../include/avr_session_policy.hpp"
 #include "../../include/shairport_dbus.hpp"
+#include "../../include/volume_map.hpp"
+#include "../../include/volume_sync.hpp"
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -145,6 +147,7 @@ static void daemonize() {
 static int64_t mono_sec()  { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec; }
 static uint64_t mono_usec(){ struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
                              return (uint64_t)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000ULL; }
+static int64_t  mono_msec(){ return (int64_t)(mono_usec() / 1000ULL); }
 
 // Optional host-global config file (key=value). Lets an auto-spawned daemon be
 // switched into D-Bus mode without changing the ALSA conf schema: drop e.g.
@@ -255,27 +258,73 @@ int main(int argc, char** argv) {
     int off_grace = config.count("dbus_off_grace") ? atoi(config.at("dbus_off_grace").c_str()) : 120;
     if (off_grace <= 0) off_grace = 120;
 
+    // ---- optional volume sync (shairport .Volume <-> AVR volume/mute) -------
+    // volume_sync = off (default) | on. When on, the daemon keeps shairport's
+    // AirPlay volume and the receiver's volume/mute in step in BOTH directions,
+    // with echo suppression and coalescing. REQUIRES shairport to run with
+    // ignore_volume_control = "yes" (so shairport outputs full-scale and does
+    // not itself drive the receiver -- the daemon owns the attenuation). Needs
+    // the D-Bus watcher, so it implies a bus connection.
+    auto truthy = [](const std::string& v){ return v=="on"||v=="1"||v=="yes"||v=="true"; };
+    bool volume_sync_on = config.count("volume_sync") && truthy(config.at("volume_sync"));
+    int max_vol = config.count("max_volume") ? atoi(config.at("max_volume").c_str()) : 60;
+    if (max_vol < 0) max_vol = 0; else if (max_vol > 100) max_vol = 100;
+    int coalesce_ms = config.count("volume_coalesce_ms") ? atoi(config.at("volume_coalesce_ms").c_str()) : 150;
+    if (coalesce_ms < 0) coalesce_ms = 0;
+    double airplay_min_db = config.count("airplay_min_db") ? atof(config.at("airplay_min_db").c_str()) : -30.0;
+
+    VolumeMap vmap; vmap.max_pct = max_vol; vmap.airplay_min_db = airplay_min_db;
+    VolumeSync volsync(vmap, coalesce_ms);
+
     ShairportWatcher watcher(log);
     SessionPolicy policy(off_grace);
+    const bool power_mode = (dbus_mode == "observe" || dbus_mode == "drive");
+    const bool drive = (dbus_mode == "drive");
     bool dbus_on = false;
-    if (dbus_mode == "observe" || dbus_mode == "drive") {
+
+    // Apply a VolumeSync decision to the two sides (mute before volume so an
+    // unmute+level in one update lands in the right order).
+    auto apply_vol = [&](const VolumeSync::Action& a) {
+        if (a.set_denon_mute) backend->set_mute(*a.set_denon_mute);
+        if (a.set_denon_pct)  backend->set_volume_absolute(*a.set_denon_pct);
+        if (a.write_airplay_db) watcher.set_volume_db(*a.write_airplay_db);
+    };
+
+    if (power_mode || volume_sync_on) {
         dbus_on = watcher.connect();   // false if the system bus is unavailable
         if (dbus_on) {
-            const bool drive = (dbus_mode == "drive");
-            log.info(std::string("D-Bus: mode=") + dbus_mode +
-                     (drive ? (" input=" + (want_input.empty() ? std::string("(none)") : want_input) +
-                               " off_grace=" + std::to_string(off_grace) + "s") : ""));
+            if (power_mode)
+                log.info(std::string("D-Bus: mode=") + dbus_mode +
+                         (drive ? (" input=" + (want_input.empty() ? std::string("(none)") : want_input) +
+                                   " off_grace=" + std::to_string(off_grace) + "s") : ""));
+            if (volume_sync_on)
+                log.info("D-Bus: volume_sync=on max_volume=" + std::to_string(max_vol) +
+                         " coalesce=" + std::to_string(coalesce_ms) + "ms airplay_min_db=" +
+                         std::to_string(airplay_min_db) +
+                         " (requires shairport ignore_volume_control=yes)");
+
             watcher.set_signal_handler([&](SessionSignal sig) {
-                AvrAction act = policy.feed(sig, mono_sec());
-                if (act == AvrAction::None) return;
-                if (!drive) {
-                    log.info(std::string("D-Bus (observe): would ") +
-                             (act == AvrAction::PowerOnSelectInput ? "power on + select input" : "power off"));
-                    return;
+                if (power_mode) {
+                    AvrAction act = policy.feed(sig, mono_sec());
+                    if (act != AvrAction::None) {
+                        if (!drive)
+                            log.info(std::string("D-Bus (observe): would ") +
+                                     (act == AvrAction::PowerOnSelectInput ? "power on + select input" : "power off"));
+                        else if (act == AvrAction::PowerOnSelectInput) ensure_power_and_input(backend.get(), want_input, log);
+                        else if (act == AvrAction::PowerOff)           power_off_avr(backend.get(), log);
+                    }
                 }
-                if (act == AvrAction::PowerOnSelectInput) ensure_power_and_input(backend.get(), want_input, log);
-                else if (act == AvrAction::PowerOff)      power_off_avr(backend.get(), log);
+                // On real playback start, snap the receiver to the phone's
+                // current volume (capped) so the very first note is at a safe,
+                // correct level rather than whatever MV the AVR was left at.
+                if (volume_sync_on && sig == SessionSignal::Play && watcher.has_volume())
+                    apply_vol(volsync.on_airplay_db(watcher.volume(), mono_msec()));
             });
+
+            if (volume_sync_on)
+                watcher.set_volume_handler([&](double db) {
+                    apply_vol(volsync.on_airplay_db(db, mono_msec()));
+                });
         } else {
             log.warn("D-Bus: requested but unavailable; running ALSA-only as usual");
         }
@@ -308,6 +357,13 @@ int main(int argc, char** argv) {
         std::vector<struct pollfd> pfds = fds;              // lsock + clients
         size_t busslot = (size_t)-1;
         if (busfd >= 0) { busslot = pfds.size(); pfds.push_back({busfd, watcher.poll_events(), 0}); }
+        (void)busslot;
+
+        // The AVR's own push fd (Denon telnet), watched only in volume_sync mode
+        // so external volume/mute changes reflect to the phone in real time.
+        int evfd = (volume_sync_on && dbus_on) ? backend->event_fd() : -1;
+        size_t evslot = (size_t)-1;
+        if (evfd >= 0) { evslot = pfds.size(); pfds.push_back({evfd, POLLIN, 0}); }
 
         // Bound the wait by the D-Bus timeout and the policy's pending power-off.
         int timeout_ms = -1;
@@ -327,6 +383,14 @@ int main(int argc, char** argv) {
             }
         }
 
+        if (volume_sync_on && dbus_on) {
+            if (auto fl = volsync.next_flush_ms()) {
+                int64_t ms = *fl - mono_msec();
+                int m = ms <= 0 ? 0 : (int)ms;
+                if (timeout_ms < 0 || m < timeout_ms) timeout_ms = m;
+            }
+        }
+
         int n = poll(pfds.data(), pfds.size(), timeout_ms);
         if (n < 0) { if (errno == EINTR) continue; break; }
 
@@ -339,6 +403,18 @@ int main(int argc, char** argv) {
                 power_off_avr(backend.get(), log);
             else if (act == AvrAction::PowerOff)
                 log.info("D-Bus (observe): would power off (grace elapsed)");
+        }
+
+        // Real-time AVR pushes (external volume/mute changes) -> reflect to the
+        // phone; then flush any coalesced volume the poll timeout just matured.
+        if (volume_sync_on && dbus_on) {
+            if (evfd >= 0 && evslot != (size_t)-1 &&
+                (pfds[evslot].revents & (POLLIN | POLLHUP | POLLERR))) {
+                AvrPush push = backend->pump_events();
+                if (push.volume) apply_vol(volsync.on_denon_pct(*push.volume, mono_msec()));
+                if (push.mute)   apply_vol(volsync.on_denon_mute(*push.mute, mono_msec()));
+            }
+            apply_vol(volsync.tick(mono_msec()));
         }
 
         // Handle lsock + clients using the persistent-portion revents. Defer

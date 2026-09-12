@@ -35,6 +35,18 @@ struct BackendCaps {
     int max_volume;           // Maximum volume level (0-100 scale)
 };
 
+// Unsolicited state pushed by the AVR over its own transport (the Denon telnet
+// session pushes "MVxx" / "MUON"/"MUOFF" whenever the volume or mute is changed
+// by the receiver's own remote, HDMI-CEC, or another controller). The daemon
+// polls event_fd() and calls pump_events() to consume whatever the receiver has
+// pushed since the last call; each field is set only if that state changed.
+struct AvrPush {
+    std::optional<int>  volume;  // 0-100, if a volume change was seen
+    std::optional<bool> mute;    // if a mute change was seen
+    std::optional<bool> power;   // if a power change was seen
+    bool empty() const { return !volume && !mute && !power; }
+};
+
 // Backend interface - all AVR control backends must implement this
 class Backend {
 public:
@@ -97,6 +109,13 @@ public:
 
     // Reconnect if connection lost
     virtual bool reconnect() = 0;
+
+    // Real-time push integration (optional). A backend whose transport delivers
+    // unsolicited state (e.g. Denon telnet) returns a pollable fd here; the
+    // daemon folds it into its poll loop and calls pump_events() when it is
+    // readable to consume buffered pushes. Default: no push channel.
+    virtual int event_fd() const { return -1; }
+    virtual AvrPush pump_events() { return {}; }
 
     // Get hardware max volume for TLV dB range calculation (optional)
     // Returns the hardware maximum volume setting detected from receiver

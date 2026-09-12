@@ -54,6 +54,13 @@ private:
     time_t last_input_switch_ = 0;
     time_t last_used_;
 
+    // Unsolicited-push classification: the receiver pushes MVxx/MUON/MUOFF/PWxx
+    // whenever its volume/mute/power is changed by the remote, HDMI-CEC or
+    // another controller. drain_locked() assembles these into rx_buffer_ and
+    // records what changed into pending_push_, which pump_events() drains.
+    std::string rx_buffer_;
+    AvrPush pending_push_;
+
     // Thread-safety
     mutable std::mutex state_mutex_;
 
@@ -138,22 +145,56 @@ private:
         return connected_;
     }
 
-    // Discard anything the receiver pushed unsolicited (e.g. "MV24" after a
-    // remote-control volume change) so a following query reads its own reply.
+    // Classify one status line pushed by (or queried from) the receiver,
+    // updating the cache and recording volume/mute/power changes into
+    // pending_push_ so pump_events() can report them to the daemon.
+    void classify_line_locked(const std::string& line) {
+        if (line.rfind("MVMAX", 0) == 0) {
+            parse_volume_response(line);           // updates max_volume_ only
+        } else if (line.rfind("MV", 0) == 0 && line.size() > 2 &&
+                   isdigit((unsigned char)line[2])) {
+            int v = parse_volume_response(line);   // MVxx -> percent
+            if (v >= 0) { volume_ = v; pending_push_.volume = v; }
+        } else if (line.rfind("MUON", 0) == 0) {
+            mute_ = true;  pending_push_.mute = true;
+        } else if (line.rfind("MUOFF", 0) == 0) {
+            mute_ = false; pending_push_.mute = false;
+        } else if (line.rfind("PWON", 0) == 0) {
+            power_ = true;  pending_push_.power = true;
+        } else if (line.rfind("PWSTANDBY", 0) == 0) {
+            power_ = false; pending_push_.power = false;
+        }
+        // SIxx / OPSTS / etc.: not relevant to the volume bridge.
+    }
+
+    // Read everything the receiver has pushed (non-blocking), assembling and
+    // classifying complete lines. Called before each send (to clear stale data
+    // and stay current) and from pump_events(). A partial trailing line stays
+    // buffered in rx_buffer_ for the next read.
     void drain_locked() {
         char buf[256];
         while (fd_ >= 0) {
             fd_set r; FD_ZERO(&r); FD_SET(fd_, &r);
             struct timeval tv = {0, 0};
-            if (select(fd_ + 1, &r, nullptr, nullptr, &tv) <= 0) return;
+            if (select(fd_ + 1, &r, nullptr, nullptr, &tv) <= 0) break;
             ssize_t n = recv(fd_, buf, sizeof(buf), 0);
             if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
                 logger_.warn("Receiver closed the connection");
                 drop_socket_locked();
                 return;
             }
-            if (n < 0) return;
+            if (n < 0) break;
+            rx_buffer_.append(buf, n);
         }
+        // Extract and classify complete lines (Denon terminates with '\r').
+        size_t pos;
+        while ((pos = rx_buffer_.find_first_of("\r\n")) != std::string::npos) {
+            std::string line = rx_buffer_.substr(0, pos);
+            rx_buffer_.erase(0, pos + 1);
+            if (!line.empty()) classify_line_locked(line);
+        }
+        // Guard against an unbounded partial line on a misbehaving peer.
+        if (rx_buffer_.size() > 4096) rx_buffer_.clear();
     }
 
     bool send_command_locked(const std::string& cmd) {
@@ -190,7 +231,12 @@ private:
     std::string read_response(int timeout_ms = 500, const std::string& expected_prefix = "") {
         if (fd_ < 0) return "";
 
+        // Consume anything drain_locked() buffered (unclassified partial/lines)
+        // so a query response is never split between rx_buffer_ and the socket.
         std::string accumulated;
+        accumulated.swap(rx_buffer_);
+        if (!expected_prefix.empty() && accumulated.find(expected_prefix) != std::string::npos)
+            return accumulated;
         auto start_time = std::chrono::steady_clock::now();
 
         while (true) {
@@ -501,6 +547,20 @@ public:
         return reconnect_locked();
     }
 
+    // Push integration: the raw socket fd to poll, and a non-blocking consume of
+    // whatever the receiver pushed (volume/mute/power changes) since last call.
+    int event_fd() {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        return fd_;
+    }
+    AvrPush pump_events() {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (fd_ >= 0) drain_locked();          // read + classify pushed lines
+        AvrPush out = pending_push_;
+        pending_push_ = AvrPush{};
+        return out;
+    }
+
     bool set_mute(bool muted) {
         std::lock_guard<std::mutex> lock(state_mutex_);
         logger_.info(muted ? "Muting" : "Unmuting");
@@ -788,6 +848,13 @@ public:
 
     bool reconnect() override {
         return conn_ && conn_->reconnect();
+    }
+
+    int event_fd() const override {
+        return conn_ ? conn_->event_fd() : -1;
+    }
+    AvrPush pump_events() override {
+        return conn_ ? conn_->pump_events() : AvrPush{};
     }
 };
 

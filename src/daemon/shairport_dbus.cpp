@@ -5,6 +5,7 @@
 #include <systemd/sd-bus.h>
 #include <poll.h>
 #include <cstring>
+#include <cmath>
 
 namespace AlsaAVR {
 
@@ -137,6 +138,35 @@ void ShairportWatcher::apply_active(bool a) {
     else   emit(SessionSignal::SessionDown);
 }
 
+void ShairportWatcher::apply_volume(double v) {
+    // Deduplicate tiny/no-op changes; VolumeSync also guards, but this keeps the
+    // log and callback quiet on repeats.
+    if (has_volume_ && std::abs(v - volume_) < 0.01) return;
+    volume_ = v;
+    has_volume_ = true;
+    logger_.debug("D-Bus: Volume -> " + std::to_string(v) + " dB");
+    if (on_volume_) on_volume_(v);
+}
+
+bool ShairportWatcher::set_volume_db(double db) {
+    if (!bus_) return false;
+    sd_bus_error err = SD_BUS_ERROR_NULL;
+    int r = sd_bus_set_property(bus_, kBusName, kPath, kIfaceMain,
+                                "Volume", &err, "d", db);
+    if (r < 0) {
+        logger_.warn(std::string("D-Bus: set Volume failed: ") +
+                     (err.message ? err.message : strerror(-r)));
+        sd_bus_error_free(&err);
+        return false;
+    }
+    sd_bus_error_free(&err);
+    // Reflect our own write into the cache so an echoed PropertiesChanged with
+    // the same value is deduplicated by apply_volume().
+    volume_ = db;
+    has_volume_ = true;
+    return true;
+}
+
 int ShairportWatcher::on_properties_changed(sd_bus_message* m) {
     const char* iface = nullptr;
     if (sd_bus_message_read(m, "s", &iface) < 0 || !iface) return 0;
@@ -159,6 +189,10 @@ int ShairportWatcher::on_properties_changed(sd_bus_message* m) {
             int v = 0;
             sd_bus_message_read(m, "v", "b", &v);
             apply_active(v != 0);
+        } else if (is_main && std::strcmp(key, "Volume") == 0) {
+            double v = 0.0;
+            sd_bus_message_read(m, "v", "d", &v);
+            apply_volume(v);
         } else if (is_remote && std::strcmp(key, "PlayerState") == 0) {
             const char* v = nullptr;
             sd_bus_message_read(m, "v", "s", &v);
@@ -190,6 +224,14 @@ void ShairportWatcher::refresh_initial_state() {
     if (sd_bus_get_property_trivial(bus_, kBusName, kPath, kIfaceMain,
                                     "Active", &err, 'b', &active) >= 0) {
         active_ = (active != 0);
+    }
+    sd_bus_error_free(&err);
+
+    // Volume (AirPlay dB)
+    double vol = 0.0;
+    if (sd_bus_get_property_trivial(bus_, kBusName, kPath, kIfaceMain,
+                                    "Volume", &err, 'd', &vol) >= 0) {
+        volume_ = vol; has_volume_ = true;
     }
     sd_bus_error_free(&err);
 
