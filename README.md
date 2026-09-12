@@ -119,7 +119,7 @@ ctl.avr {
     type denon
     host "192.168.1.100"
     port "23"           # Optional, defaults to 23
-    input "MPLAY"       # Optional: auto-switch input
+    input "MPLAY"       # Optional: the input avr-power selects for a session
 }
 
 ctl.!default {
@@ -146,7 +146,7 @@ ctl.!default {
 ctl.avr {
     type opalum
     device "/dev/ttyUSB0"
-    input "1"           # Optional: auto-switch input
+    input "1"           # Optional: the input avr-power selects for a session
 }
 
 ctl.!default {
@@ -166,6 +166,16 @@ ctl.!default {
     type cec
 }
 ```
+
+**About `input`:** it is published by the plugin as a read-only `Input Source
+Default` mixer element and applied by `avr-power on` (see below), not by the
+plugin itself. The connection is owned by the long-running `avr-controld`, so a
+switch "on open" would happen once per daemon lifetime, not once per session.
+`avr-power on` saves the current power/input state, selects the configured
+input *before* powering on (Denon receivers then power on straight into it,
+which avoids the HDMI-CEC wake-up cascade), and `avr-power restore` restores
+the input only if the receiver stays on, then powers it off if it was off.
+
 
 See `examples/` directory for complete configuration files.
 

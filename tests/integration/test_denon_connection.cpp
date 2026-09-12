@@ -3,6 +3,11 @@
 #include <thread>
 #include <chrono>
 #include <cstdlib>
+#include <cmath>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 
 using namespace AlsaAVR;
 
@@ -365,44 +370,114 @@ TEST_F(DenonConnectionTest, SetInput) {
 // Input Auto-Switch Tests
 // ============================================================================
 
-TEST_F(DenonConnectionTest, InputAutoSwitchOnInit) {
+// A raw second telnet session to the (mock) receiver, to poke it from outside
+// the backend under test: change its state behind the backend's back, or make
+// it drop the backend's session (XDROPOTHERS, a mock-only hook).
+static bool raw_avr_command(const std::string& host, const std::string& port, const std::string& cmd) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+    sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons(std::stoi(port));
+    inet_pton(AF_INET, host.c_str(), &a.sin_addr);
+    if (connect(fd, (sockaddr*)&a, sizeof(a)) != 0) { ::close(fd); return false; }
+    std::string line = cmd + "\r";
+    bool ok = send(fd, line.data(), line.size(), MSG_NOSIGNAL) == (ssize_t)line.size();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    ::close(fd);
+    return ok;
+}
+
+TEST_F(DenonConnectionTest, NoAutoSwitchOnInit) {
     SKIP_IF_NO_HARDWARE();
 
-    // First, initialize to get current input
+    // Put the receiver on DVD, then open a handle configured for MPLAY.
     ASSERT_TRUE(init_backend());
     std::string original_input = backend_->get_current_input().value_or("");
-
-    // Set input to DVD (different from MPLAY which we'll auto-switch to)
     backend_->set_input("DVD");
     wait_for_command(1000);
     EXPECT_EQ(backend_->get_current_input(), "DVD");
-
-    // Close and reinit with input auto-switch config
     backend_->close();
     backend_.reset();
 
-    // Now init with input auto-switch to MPLAY
+    // The backend lives in a long-running daemon, so init must NOT touch the
+    // input: switching is the session manager's job (avr-power reads
+    // configured_input via "Input Source Default" and switches explicitly).
     std::map<std::string, std::string> config = {{"input", "MPLAY"}};
     ASSERT_TRUE(init_backend(config));
-    wait_for_command(1000);
-
-    // Should have switched to MPLAY on init
-    EXPECT_EQ(backend_->get_current_input(), "MPLAY");
-
-    // Verify that volume changes don't trigger input switch
-    backend_->set_input("DVD");
-    wait_for_command(1000);
+    wait_for_command(500);
     EXPECT_EQ(backend_->get_current_input(), "DVD");
 
+    // An explicit switch still works, and volume changes never touch the input.
+    ASSERT_TRUE(backend_->set_input("MPLAY"));
+    wait_for_command(500);
+    EXPECT_EQ(backend_->get_current_input(), "MPLAY");
     backend_->set_volume_absolute(50);
     wait_for_command(500);
+    EXPECT_EQ(backend_->get_current_input(), "MPLAY");
 
-    // Should still be on DVD (no auto-switch on volume change)
-    EXPECT_EQ(backend_->get_current_input(), "DVD");
-
-    // Restore
     backend_->set_input(original_input);
     wait_for_command(1000);
+}
+
+// ============================================================================
+// Long-lived connection: the receiver drops sessions and is driven by others
+// ============================================================================
+
+// The receiver closes idle telnet sessions (standby, network hiccups). A
+// long-lived owner (avr-controld) must notice and reconnect, transparently to
+// the caller - this is exactly what left StueTaerten with no volume/input
+// control for days on 0.3.0.
+TEST_F(DenonConnectionTest, ReconnectAfterReceiverDropsSession) {
+    SKIP_IF_NO_HARDWARE();
+    ASSERT_TRUE(init_backend());
+    ASSERT_TRUE(backend_->set_volume_absolute(30));
+
+    ASSERT_TRUE(raw_avr_command(test_host_, test_port_, "XDROPOTHERS"));
+    wait_for_command(300);
+
+    // Commands keep working (the first one re-establishes the session) and the
+    // backend does not lie about being connected in between.
+    EXPECT_TRUE(backend_->set_volume_absolute(37));
+    EXPECT_TRUE(backend_->is_connected());
+    auto v = backend_->get_volume();
+    ASSERT_TRUE(v.has_value());
+    EXPECT_LE(std::abs(*v - 37), 1);
+
+    // ... and again, to be sure it is not a one-shot.
+    ASSERT_TRUE(raw_avr_command(test_host_, test_port_, "XDROPOTHERS"));
+    wait_for_command(300);
+    auto in = backend_->get_current_input();
+    ASSERT_TRUE(in.has_value());
+    EXPECT_TRUE(backend_->is_connected());
+    EXPECT_TRUE(backend_->set_input("MPLAY"));
+    EXPECT_EQ(backend_->get_current_input(), "MPLAY");
+}
+
+// The receiver is also driven by its remote and by HDMI-CEC from the TV, so
+// cached state in a long-lived owner goes stale. Reads must ask the receiver.
+TEST_F(DenonConnectionTest, ReadsReflectExternalChanges) {
+    SKIP_IF_NO_HARDWARE();
+    ASSERT_TRUE(init_backend());
+    ASSERT_TRUE(backend_->set_power(true));
+    ASSERT_TRUE(backend_->set_input("MPLAY"));
+    ASSERT_TRUE(backend_->set_mute(false));
+    EXPECT_EQ(backend_->get_power(), true);
+
+    // Someone else (TV over CEC) puts it in standby and picks another input.
+    ASSERT_TRUE(raw_avr_command(test_host_, test_port_, "PWSTANDBY"));
+    ASSERT_TRUE(raw_avr_command(test_host_, test_port_, "SIBD"));
+    ASSERT_TRUE(raw_avr_command(test_host_, test_port_, "MUON"));
+    ASSERT_TRUE(raw_avr_command(test_host_, test_port_, "MV20"));
+
+    EXPECT_EQ(backend_->get_power(), false);
+    EXPECT_EQ(backend_->get_current_input(), "BD");
+    EXPECT_EQ(backend_->get_mute(), true);
+    auto v = backend_->get_volume();
+    ASSERT_TRUE(v.has_value());
+    EXPECT_LE(std::abs(*v - 20), 1);   // mock max-volume 98 -> ~1:1
+
+    // Restore for the other tests.
+    backend_->set_mute(false);
+    backend_->set_power(true);
 }
 
 // ============================================================================

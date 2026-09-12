@@ -18,6 +18,11 @@
 #include <vector>
 #include <map>
 #include <string>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <chrono>
 
 using namespace AlsaAVR;
 
@@ -30,6 +35,22 @@ static std::map<std::string, std::string> mock_cfg() {
     const char* p = std::getenv("MOCK_PORT"); c["port"] = p ? p : "23333";
     c["input"] = "MPLAY";
     return c;
+}
+
+// Raw telnet session to the mock, to drop the daemon's session (XDROPOTHERS,
+// a mock-only hook) or change receiver state behind the daemon's back.
+static bool raw_avr_command(const std::string& cmd) {
+    auto c = mock_cfg();
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+    sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons(std::stoi(c["port"]));
+    inet_pton(AF_INET, c["host"].c_str(), &a.sin_addr);
+    if (connect(fd, (sockaddr*)&a, sizeof(a)) != 0) { ::close(fd); return false; }
+    std::string line = cmd + "\r";
+    bool ok = send(fd, line.data(), line.size(), MSG_NOSIGNAL) == (ssize_t)line.size();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    ::close(fd);
+    return ok;
 }
 
 static std::unique_ptr<Backend> make_client() {
@@ -112,4 +133,48 @@ TEST_F(Broker, ConcurrentClientsNoCorruption) {
     }
     for (auto& t : ts) t.join();
     EXPECT_EQ(fails.load(), 0);
+}
+
+// The AVR drops idle telnet sessions. The daemon owns the only session for
+// weeks, so it must reconnect on its own - clients never see the gap.
+TEST_F(Broker, DaemonReconnectsAfterAvrDropsSession) {
+    ASSERT_TRUE(be->set_volume_absolute(30));
+    ASSERT_TRUE(raw_avr_command("XDROPOTHERS"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    EXPECT_TRUE(be->set_volume_absolute(44));
+    EXPECT_TRUE(be->is_connected());
+    auto v = be->get_volume();
+    ASSERT_TRUE(v.has_value());
+    EXPECT_LE(std::abs(*v - 44), 1);
+
+    // A fresh client after the drop must work too (it is the same daemon).
+    auto b2 = make_client();
+    ASSERT_TRUE(b2->is_connected());
+    ASSERT_TRUE(b2->set_input("MPLAY"));
+    EXPECT_EQ(b2->get_current_input(), "MPLAY");
+}
+
+// Reads go to the AVR, not a cache: the TV (CEC) and the remote change it too.
+TEST_F(Broker, ReadsReflectExternalChanges) {
+    ASSERT_TRUE(be->set_power(true));
+    ASSERT_TRUE(be->set_input("MPLAY"));
+    ASSERT_TRUE(raw_avr_command("PWSTANDBY"));
+    ASSERT_TRUE(raw_avr_command("SIBD"));
+    EXPECT_EQ(be->get_power(), false);
+    EXPECT_EQ(be->get_current_input(), "BD");
+    be->set_power(true);
+}
+
+// The "input" parameter is no longer a one-shot switch at daemon start; it is
+// published to the session manager (avr-power) as the configured input, and
+// the daemon itself leaves the input alone until told.
+TEST_F(Broker, ConfiguredInputIsExposedNotAutoApplied) {
+    ASSERT_TRUE(be->set_input("TV"));
+    auto b2 = make_client();                       // config carries input=MPLAY
+    ASSERT_TRUE(b2->is_connected());
+    EXPECT_EQ(b2->configured_input(), std::optional<std::string>("MPLAY"));
+    EXPECT_EQ(b2->get_current_input(), "TV");      // untouched by the new client
+    ASSERT_TRUE(b2->set_input(*b2->configured_input()));
+    EXPECT_EQ(be->get_current_input(), "MPLAY");   // visible through the other handle
 }

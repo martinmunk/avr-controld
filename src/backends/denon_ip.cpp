@@ -31,6 +31,7 @@ private:
     std::string host_;
     int port_;
     bool connected_ = false;
+    bool reconnecting_ = false;   // guards send->reconnect->probe->send recursion
     Logger logger_;
 
     // Receiver state (discovered once on construction, updated on commands)
@@ -94,14 +95,69 @@ private:
         return true;
     }
 
+    // Forget a dead socket; the next command reconnects.
+    void drop_socket_locked() {
+        if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+        connected_ = false;
+    }
+
+    // Re-establish the telnet session and re-read receiver state. The receiver
+    // drops idle sessions (standby, network hiccups), and a long-lived owner
+    // such as avr-controld must recover from that rather than fail forever.
+    bool reconnect_locked() {
+        if (reconnecting_) return false;
+        reconnecting_ = true;
+        drop_socket_locked();
+        logger_.info("Reconnecting to " + host_ + ":" + std::to_string(port_));
+        connected_ = connect_socket();
+        if (connected_) {
+            logger_.info("Reconnected");
+            probe_initial_state();
+        } else {
+            logger_.error("Reconnect failed");
+        }
+        reconnecting_ = false;
+        return connected_;
+    }
+
+    // Discard anything the receiver pushed unsolicited (e.g. "MV24" after a
+    // remote-control volume change) so a following query reads its own reply.
+    void drain_locked() {
+        char buf[256];
+        while (fd_ >= 0) {
+            fd_set r; FD_ZERO(&r); FD_SET(fd_, &r);
+            struct timeval tv = {0, 0};
+            if (select(fd_ + 1, &r, nullptr, nullptr, &tv) <= 0) return;
+            ssize_t n = recv(fd_, buf, sizeof(buf), 0);
+            if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+                logger_.warn("Receiver closed the connection");
+                drop_socket_locked();
+                return;
+            }
+            if (n < 0) return;
+        }
+    }
+
     bool send_command_locked(const std::string& cmd) {
-        if (fd_ < 0) {
+        // A receiver that closed the session has sent us a FIN, but a send()
+        // would still "succeed" locally and the command would be lost. Look
+        // for that first (a zero-timeout read), and reconnect if needed.
+        drain_locked();
+        if (fd_ < 0 && !reconnect_locked()) {
             logger_.error("Cannot send command, socket not connected");
             return false;
         }
 
         std::string full_cmd = cmd + "\r";
         ssize_t sent = send(fd_, full_cmd.c_str(), full_cmd.length(), MSG_NOSIGNAL);
+        if (sent != static_cast<ssize_t>(full_cmd.length())) {
+            logger_.warn("send() failed for " + cmd + " (" + std::string(strerror(errno)) + "), reconnecting");
+            if (!reconnect_locked()) {
+                logger_.error("Failed to send command: " + cmd);
+                return false;
+            }
+            sent = send(fd_, full_cmd.c_str(), full_cmd.length(), MSG_NOSIGNAL);
+        }
         bool success = sent == static_cast<ssize_t>(full_cmd.length());
 
         if (!success) {
@@ -113,7 +169,7 @@ private:
         return success;
     }
 
-    std::string read_response(int timeout_ms = 500, const std::string& expected_prefix = "") const {
+    std::string read_response(int timeout_ms = 500, const std::string& expected_prefix = "") {
         if (fd_ < 0) return "";
 
         std::string accumulated;
@@ -143,7 +199,13 @@ private:
 
             char buffer[256];
             ssize_t n = recv(fd_, buffer, sizeof(buffer) - 1, 0);
-            if (n <= 0) {
+            if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+                logger_.warn(n == 0 ? std::string("Receiver closed the connection")
+                                    : "recv() failed: " + std::string(strerror(errno)));
+                drop_socket_locked();
+                return accumulated;
+            }
+            if (n < 0) {
                 return accumulated;
             }
 
@@ -205,75 +267,90 @@ private:
         }
     }
 
+    // Each query_*_locked() asks the receiver for one field and updates the
+    // cache from the reply. Returns false when the receiver did not answer.
+    bool query_volume_locked() {
+        if (!send_command_locked("MV?")) return false;
+        // Denon receivers return: "MV70\rMVMAX 70\r" - wait for MVMAX to get it all
+        std::string response = read_response(1000, "MVMAX");
+        logger_.debug("MV response: " + response);
+        int vol = parse_volume_response(response);   // also picks up MVMAX
+        if (vol < 0) return false;
+        volume_ = vol;
+        return true;
+    }
+
+    bool query_mute_locked() {
+        if (!send_command_locked("MU?")) return false;
+        std::string response = read_response(500, "MU");
+        if (response.find("MUON") != std::string::npos)       mute_ = true;
+        else if (response.find("MUOFF") != std::string::npos) mute_ = false;
+        else return false;
+        return true;
+    }
+
+    bool query_power_locked() {
+        if (!send_command_locked("PW?")) return false;
+        std::string response = read_response(500, "PW");
+        if (response.find("PWON") != std::string::npos)           power_ = true;
+        else if (response.find("PWSTANDBY") != std::string::npos) power_ = false;
+        else return false;
+        return true;
+    }
+
+    bool query_input_locked() {
+        if (!send_command_locked("SI?")) return false;
+        std::string response = read_response(500, "SI");
+        size_t si_pos = response.find("SI");
+        if (si_pos == std::string::npos) return false;
+        std::string input_code = response.substr(si_pos + 2);
+        size_t end = input_code.find_first_of("\r\n ");   // up to CR or whitespace
+        if (end != std::string::npos) input_code = input_code.substr(0, end);
+        if (input_code.empty()) return false;
+        current_input_ = input_code;
+        return true;
+    }
+
+    // Live read of one field. The receiver is also driven by its remote and by
+    // HDMI-CEC, so in a long-lived owner the cache goes stale; ask every time
+    // and fall back to the cache only when the receiver does not answer (which
+    // also means the session is probably dead, so try to reconnect).
+    template <typename Query>
+    void refresh_locked(Query query) {
+        if (fd_ < 0 && !reconnect_locked()) return;
+        if (!query()) {
+            logger_.warn("No reply to query, reconnecting");
+            reconnect_locked();      // re-probes every field on success
+        }
+    }
+
     void probe_initial_state() {
         logger_.info("Probing initial receiver state");
 
-        // Query volume (MV?) - response includes both MV and MVMAX
-        // Denon receivers return: "MV70\rMVMAX 70\r"
-        if (send_command_locked("MV?")) {
-            std::string response = read_response(1000, "MVMAX");  // Wait for MVMAX to get complete response
-            logger_.debug("MV response: " + response);
-
-            // parse_volume_response() will detect MVMAX in the response and update max_volume_
-            int vol = parse_volume_response(response);
-            if (vol >= 0) {
-                volume_ = vol;
-                logger_.info("Probed initial volume: " + std::to_string(volume_) +
-                           " (max=" + std::to_string(max_volume_) + ")");
-            } else {
-                logger_.warn("Failed to probe volume, using default: 50");
-            }
+        if (query_volume_locked()) {
+            logger_.info("Probed initial volume: " + std::to_string(volume_) +
+                         " (max=" + std::to_string(max_volume_) + ")");
+        } else {
+            logger_.warn("Failed to probe volume, keeping: " + std::to_string(volume_));
         }
 
-        // Query mute state (MU?)
-        if (send_command_locked("MU?")) {
-            std::string response = read_response(500, "MU");
-            if (response.find("MUON") != std::string::npos) {
-                mute_ = true;
-                logger_.info("Probed initial mute: ON");
-            } else if (response.find("MUOFF") != std::string::npos) {
-                mute_ = false;
-                logger_.info("Probed initial mute: OFF");
-            } else {
-                mute_ = false;
-                logger_.debug("Failed to probe mute, defaulting to OFF");
-            }
+        if (query_mute_locked()) {
+            logger_.info(std::string("Probed initial mute: ") + (mute_ ? "ON" : "OFF"));
+        } else {
+            logger_.debug("Failed to probe mute, keeping current value");
         }
 
-        // Query power state (PW?)
-        if (send_command_locked("PW?")) {
-            std::string response = read_response(500, "PW");
-            if (response.find("PWON") != std::string::npos) {
-                power_ = true;
-                logger_.info("Probed initial power: ON");
-            } else if (response.find("PWSTANDBY") != std::string::npos) {
-                power_ = false;
-                logger_.info("Probed initial power: STANDBY");
-            } else {
-                power_ = true;  // Default to on if probe fails
-                logger_.debug("Failed to probe power, defaulting to ON");
-            }
+        if (query_power_locked()) {
+            logger_.info(std::string("Probed initial power: ") + (power_ ? "ON" : "STANDBY"));
+        } else {
+            logger_.debug("Failed to probe power, keeping current value");
         }
 
-        // Query current input (SI?)
-        if (send_command_locked("SI?")) {
-            std::string response = read_response(500, "SI");
-            size_t si_pos = response.find("SI");
-            if (si_pos != std::string::npos) {
-                std::string input_code = response.substr(si_pos + 2);
-                // Extract input name (until CR or whitespace)
-                size_t end = input_code.find_first_of("\r\n ");
-                if (end != std::string::npos) {
-                    input_code = input_code.substr(0, end);
-                }
-                if (!input_code.empty()) {
-                    current_input_ = input_code;
-                    original_input_ = input_code;  // Save for restoration on close
-                    logger_.info("Probed initial input: " + current_input_);
-                }
-            } else {
-                logger_.debug("Failed to probe current input");
-            }
+        if (query_input_locked()) {
+            if (original_input_.empty()) original_input_ = current_input_;  // for restore on close
+            logger_.info("Probed initial input: " + current_input_);
+        } else {
+            logger_.debug("Failed to probe current input");
         }
 
         // Note: We don't probe speaker levels on init since they're rarely used
@@ -321,6 +398,7 @@ public:
 
     ~DenonConnection() {
         std::lock_guard<std::mutex> lock(state_mutex_);
+        reconnecting_ = true;   // no reconnect attempts while tearing down
         if (fd_ >= 0) {
             // Restore original input if it changed
             if (!original_input_.empty() && original_input_ != current_input_) {
@@ -336,9 +414,10 @@ public:
         }
     }
 
-    // State accessors (thread-safe)
-    int get_volume() const {
+    // State accessors (thread-safe). Each asks the receiver (see refresh_locked).
+    int get_volume() {
         std::lock_guard<std::mutex> lock(state_mutex_);
+        refresh_locked([this] { return query_volume_locked(); });
         return volume_;
     }
 
@@ -381,19 +460,27 @@ public:
         return false;
     }
 
-    bool get_mute() const {
+    bool get_mute() {
         std::lock_guard<std::mutex> lock(state_mutex_);
+        refresh_locked([this] { return query_mute_locked(); });
         return mute_;
     }
 
-    bool get_power() const {
+    bool get_power() {
         std::lock_guard<std::mutex> lock(state_mutex_);
+        refresh_locked([this] { return query_power_locked(); });
         return power_;
     }
 
-    std::string get_current_input() const {
+    std::string get_current_input() {
         std::lock_guard<std::mutex> lock(state_mutex_);
+        refresh_locked([this] { return query_input_locked(); });
         return current_input_;
+    }
+
+    bool reconnect() {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        return reconnect_locked();
     }
 
     bool set_mute(bool muted) {
@@ -551,7 +638,6 @@ std::mutex DenonConnectionPool::mutex_;
 class DenonIPBackend : public Backend {
 private:
     std::shared_ptr<DenonConnection> conn_;
-    std::string input_to_switch_;  // Per-instance config for auto-switching
 
 public:
     bool init(const std::map<std::string, std::string>& config) override {
@@ -574,26 +660,12 @@ public:
         std::string log_file = config.count("log_file") ? config.at("log_file") : "";
         std::string log_level = config.count("log_level") ? config.at("log_level") : "INFO";
 
-        // Get optional input switching config
-        auto input_it = config.find("input");
-        if (input_it != config.end()) {
-            input_to_switch_ = input_it->second;
-        }
-
-        // Acquire shared connection (creates and probes if new)
+        // Acquire shared connection (creates and probes if new). The "input"
+        // parameter is NOT applied here: this backend lives in avr-controld for
+        // weeks, so a one-shot switch at init is meaningless. Clients switch
+        // per session (avr-power reads it as "Input Source Default").
         conn_ = DenonConnectionPool::acquire(host, port, log_file, log_level);
-        if (!conn_) return false;
-
-        // Auto-switch input if configured (only on initial connection)
-        // Check if input needs switching (not already on desired input)
-        if (!input_to_switch_.empty()) {
-            std::string current = conn_->get_current_input();
-            if (current != input_to_switch_) {
-                conn_->set_input(input_to_switch_);
-            }
-        }
-
-        return true;
+        return conn_ != nullptr;
     }
 
     void close() override {
@@ -604,7 +676,7 @@ public:
     BackendCaps capabilities() const override {
         return {
             .supports_absolute = true,
-            .supports_query = false,
+            .supports_query = true,
             .supports_mute = true,
             .supports_input_select = true,
             .supports_speaker_level = true,
@@ -644,7 +716,7 @@ public:
     }
 
     std::optional<bool> get_power() override {
-        return conn_ ? std::optional<bool>(conn_->is_connected()) : std::nullopt;
+        return conn_ ? std::optional<bool>(conn_->get_power()) : std::nullopt;
     }
 
     std::string name() const override {
@@ -697,9 +769,7 @@ public:
     }
 
     bool reconnect() override {
-        // For shared connections, we don't support explicit reconnect
-        // The connection is managed by the pool
-        return conn_ && conn_->is_connected();
+        return conn_ && conn_->reconnect();
     }
 };
 

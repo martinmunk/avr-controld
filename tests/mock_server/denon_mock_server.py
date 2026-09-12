@@ -135,6 +135,8 @@ class DenonMockServer:
         self.running = False
         self.server_socket: Optional[socket.socket] = None
         self.client_threads = []
+        self.clients = set()          # live client sockets (test hooks: XDROP*)
+        self.clients_lock = threading.Lock()
 
     def start(self):
         """Start the mock server"""
@@ -179,6 +181,8 @@ class DenonMockServer:
 
     def handle_client(self, client_socket: socket.socket, client_address):
         """Handle a single client connection"""
+        with self.clients_lock:
+            self.clients.add(client_socket)
         try:
             buffer = ""
 
@@ -198,6 +202,24 @@ class DenonMockServer:
                         if command:
                             print(f"[{time.strftime('%H:%M:%S')}] {client_address} -> {command}")
 
+                            # Test-only hooks (not Denon protocol): simulate the AVR
+                            # dropping the telnet session, as a real one does after
+                            # standby / network hiccups. XDROP closes THIS client,
+                            # XDROPOTHERS closes every OTHER client (so a test can
+                            # kill the connection held by a backend/daemon under test).
+                            if command == "XDROP":
+                                return
+                            if command == "XDROPOTHERS":
+                                with self.clients_lock:
+                                    others = [c for c in self.clients if c is not client_socket]
+                                for c in others:
+                                    try:
+                                        c.shutdown(socket.SHUT_RDWR)
+                                    except OSError:
+                                        pass
+                                client_socket.sendall(b"XDROPPED\r")
+                                continue
+
                             response = self.receiver.process_command(command)
                             if response:
                                 client_socket.sendall(response.encode('ascii'))
@@ -214,6 +236,8 @@ class DenonMockServer:
             print(f"Error handling client {client_address}: {e}")
         finally:
             print(f"[{time.strftime('%H:%M:%S')}] Client disconnected: {client_address}")
+            with self.clients_lock:
+                self.clients.discard(client_socket)
             client_socket.close()
 
     def stop(self):

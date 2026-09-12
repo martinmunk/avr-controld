@@ -1,3 +1,23 @@
+martinmunk-alsa-control-avr (0.3.1) stable; urgency=medium
+
+  * Denon IP: recover from a dropped telnet session. The receiver closes idle
+    sessions; the long-lived avr-controld kept the dead socket and every
+    command failed until restart (no volume/input control on StueTaerten).
+    Now detects the close before each send, reconnects and re-sends.
+  * Denon IP: volume/mute/power/input reads ask the receiver instead of a
+    cache (the remote and HDMI-CEC change it too). get_power no longer
+    reports "connected" as "on".
+  * Input selection is per session again: the "input" parameter is exposed as
+    the read-only "Input Source Default" element and applied by avr-power on,
+    which selects it BEFORE powering on (Denon powers on straight into a
+    non-HDMI input; PWON with an HDMI input selected wakes source + TV over
+    CEC, which then grab the receiver). avr-power restore no longer switches
+    the input back when it is about to power off, for the same reason.
+  * Tests: mock XDROP/XDROPOTHERS hooks; reconnect, live-read and
+    configured-input tests at integration and broker level.
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Sat, 12 Sep 2026 11:00:00 +0000
+
 martinmunk-alsa-control-avr (0.3.0) stable; urgency=medium
 
   * Add avr-controld: a single-owner connection broker. One daemon owns each

@@ -77,6 +77,11 @@ public:
 
     std::vector<std::string> get_available_inputs() override { return inputs_; }
     bool set_input(const std::string& in) override { return req_ok("SET input " + in); }
+    std::optional<std::string> configured_input() const override {
+        auto it = config_.find("input");
+        if (it == config_.end() || it->second.empty()) return std::nullopt;
+        return it->second;
+    }
     std::optional<std::string> get_current_input() override {
         auto p = ok_payload(request("GET input"));
         if (!p || *p == "-") return std::nullopt;

@@ -76,6 +76,11 @@ public:
     virtual std::vector<std::string> get_available_inputs() { return {}; }
     virtual bool set_input(const std::string& input) { return false; }
     virtual std::optional<std::string> get_current_input() { return std::nullopt; }
+    // The input this handle was configured to use (the plugin's "input"
+    // parameter), if any. Exposed by the ALSA plugins as the read-only
+    // "Input Source Default" element so a session manager (avr-power) can
+    // switch to it after saving the input that was active before.
+    virtual std::optional<std::string> configured_input() const { return std::nullopt; }
 
     // Speaker level control (optional)
     virtual std::vector<Speaker> get_available_speakers() { return {}; }

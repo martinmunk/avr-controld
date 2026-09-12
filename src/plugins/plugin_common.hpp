@@ -40,6 +40,7 @@ struct AVRControl {
         ELEM_POWER,
         ELEM_STANDBY_TIMEOUT,
         ELEM_INPUT,
+        ELEM_INPUT_DEFAULT,   // read-only: the configured "input" parameter
         ELEM_SPEAKER_FL,      // Front Left
         ELEM_SPEAKER_FR,      // Front Right
         ELEM_SPEAKER_C,       // Center
@@ -54,6 +55,17 @@ struct AVRControl {
         ELEM_COUNT
     };
 };
+
+// Index into available_inputs of the backend's configured input, if it has
+// one and it is a known input. Drives the read-only "Input Source Default".
+static std::optional<int> default_input_index(AVRControl* ctrl) {
+    if (!ctrl->backend) return std::nullopt;
+    auto want = ctrl->backend->configured_input();
+    if (!want) return std::nullopt;
+    for (size_t i = 0; i < ctrl->available_inputs.size(); i++)
+        if (ctrl->available_inputs[i] == *want) return static_cast<int>(i);
+    return std::nullopt;
+}
 
 // Forward declarations
 static void avr_close(snd_ctl_ext_t *ext);
@@ -121,6 +133,7 @@ static int avr_elem_count(snd_ctl_ext_t *ext) {
     // Add Input Source control if supported
     if (ctrl->backend && ctrl->backend->capabilities().supports_input_select && !ctrl->available_inputs.empty()) {
         count++;
+        if (default_input_index(ctrl)) count++;   // Input Source Default
     }
 
     // Add speaker level controls based on actual available speakers
@@ -151,6 +164,10 @@ static int offset_to_elem(snd_ctl_ext_t *ext, unsigned int offset) {
     if (ctrl->backend && ctrl->backend->capabilities().supports_input_select && !ctrl->available_inputs.empty()) {
         if (offset == current) return AVRControl::ELEM_INPUT;
         current++;
+        if (default_input_index(ctrl)) {
+            if (offset == current) return AVRControl::ELEM_INPUT_DEFAULT;
+            current++;
+        }
     }
 
     // Speaker levels (if supported) - map based on actual available speakers
@@ -202,6 +219,9 @@ static int avr_elem_list(snd_ctl_ext_t *ext, unsigned int offset, snd_ctl_elem_i
         break;
     case AVRControl::ELEM_INPUT:
         snd_ctl_elem_id_set_name(id, "Input Source");
+        break;
+    case AVRControl::ELEM_INPUT_DEFAULT:
+        snd_ctl_elem_id_set_name(id, "Input Source Default");
         break;
     case AVRControl::ELEM_SPEAKER_FL:
         snd_ctl_elem_id_set_name(id, "01 FL Playback Volume");
@@ -256,6 +276,8 @@ static snd_ctl_ext_key_t avr_find_elem(snd_ctl_ext_t * /*ext*/, const snd_ctl_el
         return AVRControl::ELEM_STANDBY_TIMEOUT;
     if (strcmp(name, "Input Source") == 0)
         return AVRControl::ELEM_INPUT;
+    if (strcmp(name, "Input Source Default") == 0)
+        return AVRControl::ELEM_INPUT_DEFAULT;
 
     // Speaker level controls
     if (strcmp(name, "01 FL Playback Volume") == 0)
@@ -304,6 +326,11 @@ static int avr_get_attribute(snd_ctl_ext_t * /*ext*/, snd_ctl_ext_key_t key,
         *acc = SND_CTL_EXT_ACCESS_READWRITE;
         *count = 1;
         return 0;
+    case AVRControl::ELEM_INPUT_DEFAULT:
+        *type = SND_CTL_ELEM_TYPE_ENUMERATED;
+        *acc = SND_CTL_EXT_ACCESS_READ;
+        *count = 1;
+        return 0;
     case AVRControl::ELEM_SPEAKER_FL:
     case AVRControl::ELEM_SPEAKER_FR:
     case AVRControl::ELEM_SPEAKER_C:
@@ -346,7 +373,7 @@ static int avr_get_integer_info(snd_ctl_ext_t * /*ext*/, snd_ctl_ext_key_t key,
 static int avr_get_enumerated_info(snd_ctl_ext_t *ext, snd_ctl_ext_key_t key, unsigned int *items) {
     AVRControl* ctrl = reinterpret_cast<AVRControl*>(ext->private_data);
 
-    if (key != AVRControl::ELEM_INPUT)
+    if (key != AVRControl::ELEM_INPUT && key != AVRControl::ELEM_INPUT_DEFAULT)
         return -EINVAL;
 
     *items = ctrl->available_inputs.size();
@@ -356,7 +383,7 @@ static int avr_get_enumerated_info(snd_ctl_ext_t *ext, snd_ctl_ext_key_t key, un
 static int avr_get_enumerated_name(snd_ctl_ext_t *ext, snd_ctl_ext_key_t key, unsigned int item, char *name, size_t name_max_len) {
     AVRControl* ctrl = reinterpret_cast<AVRControl*>(ext->private_data);
 
-    if (key != AVRControl::ELEM_INPUT)
+    if (key != AVRControl::ELEM_INPUT && key != AVRControl::ELEM_INPUT_DEFAULT)
         return -EINVAL;
 
     if (item >= ctrl->available_inputs.size())
@@ -479,6 +506,13 @@ static int avr_write_integer(snd_ctl_ext_t *ext, snd_ctl_ext_key_t key, long *va
 
 static int avr_read_enumerated(snd_ctl_ext_t *ext, snd_ctl_ext_key_t key, unsigned int *item) {
     AVRControl* ctrl = reinterpret_cast<AVRControl*>(ext->private_data);
+
+    if (key == AVRControl::ELEM_INPUT_DEFAULT) {
+        auto idx = default_input_index(ctrl);
+        if (!idx) return -ENXIO;
+        *item = static_cast<unsigned int>(*idx);
+        return 0;
+    }
 
     if (key != AVRControl::ELEM_INPUT)
         return -EINVAL;

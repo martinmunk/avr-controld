@@ -21,6 +21,7 @@
 #include <optional>
 #include <cstring>
 #include <algorithm>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -78,13 +79,35 @@ public:
         state.input_was_unknown = input_unknown;
         saveState(state);
 
-        // 3. Power on
+        // 3. Select the configured input FIRST (the plugin's "input" parameter,
+        //    exposed as "Input Source Default"), then power on. Denon-class
+        //    receivers power on straight into a selected input; powering on
+        //    with an HDMI input still selected instead triggers the HDMI-CEC
+        //    cascade (source + TV wake up and grab the receiver).
+        auto want = readInputDefault();
+        bool switched = false;
+        if (want && (!input || *input != *want)) {
+            switched = writeInputSource(*want);
+            if (!switched) std::cerr << "Warning: Could not switch input\n";
+        }
+
         if (!writePower(true)) {
             std::cerr << "Cannot set power on\n";
             return false;
         }
 
         std::cout << "Power ON: " << device_ << "\n";
+
+        // Receivers whose input command does nothing while in standby need the
+        // input again once they are up (give them a moment to come up).
+        if (want && !power.value_or(false)) {
+            usleep(1000 * 1000);
+            switched = writeInputSource(*want) || switched;
+        }
+        if (want) {
+            std::cout << "Input: " << *want << " (" << readInputName(*want).value_or("?") << ")"
+                      << (switched ? "" : " (unchanged)") << "\n";
+        }
 
         // Report saved state
         std::cout << "  Saved state: power=";
@@ -125,8 +148,13 @@ public:
 
         bool success = true;
 
-        // 2. Restore input if we have a saved state (and it wasn't unknown)
-        if (!state->input_was_unknown && !state->input_name.empty()) {
+        // 2. Restore the input - but only if the receiver stays on. Switching
+        //    back to an HDMI input just to go to standby is pointless (the
+        //    receiver remembers it anyway) and harmful: on a CEC bus it wakes
+        //    the source and the TV, which then power the receiver back on.
+        if (!state->power_was_on) {
+            std::cout << "Powering off, leaving input as is\n";
+        } else if (!state->input_was_unknown && !state->input_name.empty()) {
             if (writeInputSource(state->input_index)) {
                 std::cout << "Restored input: " << state->input_index
                           << " (" << state->input_name << ")\n";
@@ -243,6 +271,20 @@ private:
         return snd_ctl_elem_value_get_enumerated(value, 0);
     }
 
+    // The configured default input, if the plugin exposes one.
+    std::optional<unsigned int> readInputDefault() {
+        snd_ctl_elem_id_t* id;
+        snd_ctl_elem_value_t* value;
+        snd_ctl_elem_id_alloca(&id);
+        snd_ctl_elem_id_set_interface(id, SND_CTL_ELEM_IFACE_MIXER);
+        snd_ctl_elem_id_set_name(id, "Input Source Default");
+        snd_ctl_elem_value_alloca(&value);
+        snd_ctl_elem_value_set_id(value, id);
+        if (snd_ctl_elem_read(ctl_, value) < 0) {
+            return std::nullopt;   // element absent: no input configured
+        }
+        return snd_ctl_elem_value_get_enumerated(value, 0);
+    }
     bool writeInputSource(unsigned int index) {
         snd_ctl_elem_id_t* id;
         snd_ctl_elem_value_t* value;
