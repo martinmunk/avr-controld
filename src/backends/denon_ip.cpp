@@ -13,6 +13,8 @@
 #include <memory>
 #include <map>
 #include <mutex>
+#include <chrono>
+#include <algorithm>
 #include <errno.h>
 
 namespace AlsaAVR {
@@ -32,6 +34,12 @@ private:
     int port_;
     bool connected_ = false;
     bool reconnecting_ = false;   // guards send->reconnect->probe->send recursion
+    // Reconnect backoff: the AVR refuses connections for ~1s right after PWON,
+    // and connect() returns "refused" instantly, so an unthrottled retry would
+    // busy-loop (dozens of attempts/second, hammering the log and CPU). Fail
+    // fast until next_reconnect_allowed_; the streak sets an exponential delay.
+    std::chrono::steady_clock::time_point next_reconnect_allowed_{};
+    int reconnect_fail_streak_ = 0;
     Logger logger_;
 
     // Receiver state (discovered once on construction, updated on commands)
@@ -106,15 +114,25 @@ private:
     // such as avr-controld must recover from that rather than fail forever.
     bool reconnect_locked() {
         if (reconnecting_) return false;
+        // Back off after repeated failures so we don't busy-loop against a
+        // receiver that is refusing connections (e.g. mid power-on).
+        auto now = std::chrono::steady_clock::now();
+        if (now < next_reconnect_allowed_) return false;
         reconnecting_ = true;
         drop_socket_locked();
         logger_.info("Reconnecting to " + host_ + ":" + std::to_string(port_));
         connected_ = connect_socket();
         if (connected_) {
+            reconnect_fail_streak_ = 0;
+            next_reconnect_allowed_ = now;
             logger_.info("Reconnected");
             probe_initial_state();
         } else {
-            logger_.error("Reconnect failed");
+            // 1s, 2s, 4s, 8s, 16s, capped at 30s.
+            int delay = std::min(30, 1 << std::min(reconnect_fail_streak_, 5));
+            ++reconnect_fail_streak_;
+            next_reconnect_allowed_ = now + std::chrono::seconds(delay);
+            logger_.error("Reconnect failed; backing off " + std::to_string(delay) + "s");
         }
         reconnecting_ = false;
         return connected_;
