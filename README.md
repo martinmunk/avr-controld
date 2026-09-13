@@ -283,25 +283,39 @@ step in both directions -- so changing volume from the AVR remote, HDMI-CEC or
 Home Assistant moves the phone's AirPlay slider, and vice versa -- while the
 audio stays full-range digital (the receiver does the attenuation, best quality).
 
-**This is off by default.** To enable it, shairport-sync must be told NOT to
-attenuate, so the daemon owns the receiver's volume:
+**This is off by default.** To enable it, shairport-sync must (a) not attenuate
+and (b) NOT drive a hardware mixer, so the daemon is the ONLY thing that sets the
+receiver's volume:
 
 ```
-# in shairport-sync.conf, general { }:
+# in shairport-sync.conf:
+#   general { }:
 ignore_volume_control = "yes";
+#   alsa { }: REMOVE the mixer lines, or shairport drives the receiver to MAX
+#   under ignore_volume_control (this caused a full-volume incident). Keep only
+#   output_device; delete/comment:
+#     mixer_control_name = ...
+#     mixer_device       = ...
 ```
 ```
 # in /etc/avr-controld.conf:
 volume_sync=on
-max_volume=60          # hard cap (0-100) the daemon will ever set from AirPlay
+max_volume=40          # HARD ceiling (0-100); keep it low. Enforced on EVERY path.
 volume_coalesce_ms=150 # smooth fast slider drags
 ```
 
-`max_volume` is a safety ceiling: a phone at full slider can never drive the AVR
-past it. Do NOT set `ignore_volume_control=yes` WITHOUT `volume_sync=on`, or the
-AVR would play at full scale with nothing controlling it. Requires shairport-sync
-built with D-Bus. See `DAEMON_DESIGN.md` for the mapping, echo suppression and
-current testing status.
+`max_volume` is a hard ceiling enforced on every volume-set path in the daemon:
+a phone at full slider, a wrong value, or a stray `SET volume` can never drive
+the AVR past it. Two rules, both mandatory:
+
+- Do NOT set `ignore_volume_control=yes` WITHOUT `volume_sync=on` -- the AVR would
+  play full-scale with nothing controlling it.
+- Do NOT leave shairport's `mixer_device` set WITH `volume_sync=on` -- shairport
+  drives the receiver to maximum, fighting (and beating) the daemon's cap.
+
+`avr-power` keeps its own handle for power/input, so removing the volume mixer
+does not affect power/input control. Requires shairport-sync built with D-Bus.
+See `DAEMON_DESIGN.md`.
 
 ## Architecture
 

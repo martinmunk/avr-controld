@@ -273,7 +273,7 @@ int main(int argc, char** argv) {
     // the D-Bus watcher, so it implies a bus connection.
     auto truthy = [](const std::string& v){ return v=="on"||v=="1"||v=="yes"||v=="true"; };
     bool volume_sync_on = config.count("volume_sync") && truthy(config.at("volume_sync"));
-    int max_vol = config.count("max_volume") ? atoi(config.at("max_volume").c_str()) : 60;
+    int max_vol = config.count("max_volume") ? atoi(config.at("max_volume").c_str()) : 40;
     if (max_vol < 0) max_vol = 0; else if (max_vol > 100) max_vol = 100;
     int coalesce_ms = config.count("volume_coalesce_ms") ? atoi(config.at("volume_coalesce_ms").c_str()) : 150;
     if (coalesce_ms < 0) coalesce_ms = 0;

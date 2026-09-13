@@ -171,12 +171,19 @@ now-playing/PlayerState/Active and the META/PLAYSTATE verbs, AVR untouched).
 AirPlay volume and the receiver's volume/mute in step in BOTH directions, while
 the audio stays full-range digital (the receiver does the attenuation).
 
-### Required shairport setting
-Set `ignore_volume_control = "yes"` in `shairport-sync.conf`. shairport then
-outputs full-scale and does NOT drive the hardware mixer itself; it still tracks
-the AirPlay volume and exposes it, writable, on D-Bus (`org.gnome.ShairportSync`
-`.Volume`, a dB value, `-144` = mute). avr-controld owns the receiver's
-attenuation. Without this, shairport and the daemon would both drive the AVR.
+### Required shairport settings (BOTH mandatory)
+1. `ignore_volume_control = "yes"` in `general {}` -- shairport outputs full-scale
+   and does not attenuate; the receiver, driven by the daemon, does the attenuation.
+2. **Remove `mixer_control_name` / `mixer_device` from `alsa {}`.** This is the one
+   that bit us: under `ignore_volume_control=yes` shairport does NOT leave the mixer
+   alone -- it drives the configured mixer to MAXIMUM, which reaches the receiver
+   through the ALSA plugin as an uncapped `SET volume 100` and overrides the
+   daemon's cap (the full-volume incident). With no mixer configured, shairport
+   touches no hardware and only the daemon sets the receiver's volume.
+
+shairport still tracks the AirPlay volume and exposes it, writable, on D-Bus
+(`org.gnome.ShairportSync` `.Volume`, dB, `-144`=mute). `avr-power` keeps its own
+control handle for power/input, so removing the volume mixer does not affect it.
 
 ### Flow
 * **Phone -> AVR:** the watcher's `Volume` handler feeds `VolumeSync::on_airplay_db`.
@@ -195,10 +202,14 @@ attenuation. Without this, shairport and the daemon would both drive the AVR.
   the side it came from (this is what would otherwise oscillate / feel jerky).
 
 ### Safety
-`max_volume` (0-100, default 60) hard-caps the percent the daemon will ever set
-on the receiver from AirPlay, so a phone at full slider cannot drive the AVR to a
-dangerous level. On playback start the daemon snaps the receiver to the phone's
-current volume (capped) so the first note is at a safe, known level.
+`max_volume` (0-100, default 40) is a HARD ceiling enforced on EVERY volume-set
+path in the daemon -- both the `VolumeSync` percent and the raw `SET volume` verb
+in `dispatch()` are clamped to it -- so a phone at full slider, a wrong value, or
+a stray command can never drive the AVR past it. (The earlier design only capped
+the `VolumeSync` path, and shairport's mixer drove an uncapped `SET volume 100`
+straight past it; hence rule 2 above plus this belt-and-braces clamp.) On playback
+start the daemon snaps the receiver to the phone's current volume (capped) so the
+first note is at a safe, known level.
 
 ### Async design
 Still a single-threaded `poll()` loop: the sd-bus fd and the Denon telnet fd are
@@ -208,7 +219,7 @@ and sd-bus already integrates with the existing loop; sd-event (libsystemd) woul
 be the natural choice only if this grew much larger.
 
 ### Config keys
-`volume_sync` (off|on), `max_volume` (0-100, default 60),
+`volume_sync` (off|on), `max_volume` (0-100, default 40),
 `volume_coalesce_ms` (default 150), `airplay_min_db` (default -30.0). Read from
 `-o key=value` or `/etc/avr-controld.conf`. `volume_sync=on` implies a D-Bus
 connection; if the bus is unavailable the daemon logs and runs ALSA-only.
