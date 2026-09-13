@@ -14,6 +14,7 @@
 // once playback stops. This is additive: with `dbus=off` (the default) the
 // daemon behaves exactly as before, and the ALSA/volume path is never touched.
 
+#include <algorithm>
 #include "../../include/backend.hpp"
 #include "../../include/avr_protocol.hpp"
 #include "../../include/logger.hpp"
@@ -65,7 +66,10 @@ static std::string opt_int(std::optional<int> v)  { return v ? std::to_string(*v
 static std::string opt_bool(std::optional<bool> v) { return v ? std::string(*v ? "1" : "0") : std::string("-"); }
 static std::string opt_str(std::optional<std::string> v) { return v ? *v : std::string("-"); }
 
-static std::string dispatch(Backend* be, const std::string& line) {
+// vol_ceiling is a HARD cap on any volume this daemon will set on the receiver.
+// It is the last line of defence: even a stray/buggy 'SET volume 100' is clamped.
+// 100 == no cap (normal mode); in volume_sync mode it is max_volume.
+static std::string dispatch(Backend* be, const std::string& line, int vol_ceiling) {
     std::istringstream is(line);
     std::string verb; is >> verb;
     auto ok    = [](const std::string& p = "") { return p.empty() ? std::string("OK") : "OK " + p; };
@@ -116,7 +120,9 @@ static std::string dispatch(Backend* be, const std::string& line) {
     }
     if (verb == "SET") {
         std::string noun; is >> noun;
-        if (noun == "volume")  { int v; if (!(is >> v)) return "ERR bad value"; return boolr(be->set_volume_absolute(v)); }
+        if (noun == "volume")  { int v; if (!(is >> v)) return "ERR bad value";
+                                 if (v < 0) v = 0; if (v > vol_ceiling) v = vol_ceiling;
+                                 return boolr(be->set_volume_absolute(v)); }
         if (noun == "mute")    { int v; if (!(is >> v)) return "ERR bad value"; return boolr(be->set_mute(v != 0)); }
         if (noun == "power")   { int v; if (!(is >> v)) return "ERR bad value"; return boolr(be->set_power(v != 0)); }
         if (noun == "standby") { int v; if (!(is >> v)) return "ERR bad value"; return boolr(be->set_standby_timeout(v != 0)); }
@@ -286,7 +292,7 @@ int main(int argc, char** argv) {
     // unmute+level in one update lands in the right order).
     auto apply_vol = [&](const VolumeSync::Action& a) {
         if (a.set_denon_mute) backend->set_mute(*a.set_denon_mute);
-        if (a.set_denon_pct)  backend->set_volume_absolute(*a.set_denon_pct);
+        if (a.set_denon_pct)  backend->set_volume_absolute(std::min(*a.set_denon_pct, max_vol));
         if (a.write_airplay_db) watcher.set_volume_db(*a.write_airplay_db);
     };
 
@@ -457,7 +463,7 @@ int main(int argc, char** argv) {
                                     : "OK -";
                 } else {
                     if (!backend->is_connected()) backend->reconnect();   // best effort
-                    reply = dispatch(backend.get(), line);
+                    reply = dispatch(backend.get(), line, volume_sync_on ? max_vol : 100);
                 }
                 reply += "\n";
                 if (write(cfd, reply.data(), reply.size()) < 0) { /* client gone; cleaned up below */ }
