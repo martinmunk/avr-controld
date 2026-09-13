@@ -150,15 +150,21 @@ void ShairportWatcher::apply_volume(double v) {
 
 bool ShairportWatcher::set_volume_db(double db) {
     if (!bus_) return false;
+    // The sender's AirPlay volume is set by CALLING RemoteControl.SetAirplayVolume(d)
+    // (dB). shairport applies it and reports it to the AirPlay sender, so the
+    // phone slider follows. The main-interface "Volume" property is write/init-
+    // only and does NOT reflect the sender -- never use it for this.
     sd_bus_error err = SD_BUS_ERROR_NULL;
-    int r = sd_bus_set_property(bus_, kBusName, kPath, kIfaceMain,
-                                "Volume", &err, "d", db);
+    sd_bus_message* reply = nullptr;
+    int r = sd_bus_call_method(bus_, kBusName, kPath, kIfaceRemote,
+                               "SetAirplayVolume", &err, &reply, "d", db);
     if (r < 0) {
-        logger_.warn(std::string("D-Bus: set Volume failed: ") +
+        logger_.warn(std::string("D-Bus: SetAirplayVolume failed: ") +
                      (err.message ? err.message : strerror(-r)));
         sd_bus_error_free(&err);
         return false;
     }
+    if (reply) sd_bus_message_unref(reply);
     sd_bus_error_free(&err);
     // Reflect our own write into the cache so an echoed PropertiesChanged with
     // the same value is deduplicated by apply_volume().
@@ -189,7 +195,7 @@ int ShairportWatcher::on_properties_changed(sd_bus_message* m) {
             int v = 0;
             sd_bus_message_read(m, "v", "b", &v);
             apply_active(v != 0);
-        } else if (is_main && std::strcmp(key, "Volume") == 0) {
+        } else if (is_remote && std::strcmp(key, "AirplayVolume") == 0) {
             double v = 0.0;
             sd_bus_message_read(m, "v", "d", &v);
             apply_volume(v);
@@ -227,10 +233,12 @@ void ShairportWatcher::refresh_initial_state() {
     }
     sd_bus_error_free(&err);
 
-    // Volume (AirPlay dB)
+    // Volume: the sender's AirPlay volume is on RemoteControl.AirplayVolume
+    // (populated from the 'pvol' metadata; it tracks the sender even under
+    // ignore_volume_control=yes). The main-interface "Volume" is write/init-only.
     double vol = 0.0;
-    if (sd_bus_get_property_trivial(bus_, kBusName, kPath, kIfaceMain,
-                                    "Volume", &err, 'd', &vol) >= 0) {
+    if (sd_bus_get_property_trivial(bus_, kBusName, kPath, kIfaceRemote,
+                                    "AirplayVolume", &err, 'd', &vol) >= 0) {
         volume_ = vol; has_volume_ = true;
     }
     sd_bus_error_free(&err);

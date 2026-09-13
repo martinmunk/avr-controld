@@ -165,7 +165,7 @@ and the verify-retry orchestration were validated live against the real
 shairport-sync 5.2.1 + Denon on StueTaerten (observe mode: correct decode of
 now-playing/PlayerState/Active and the META/PLAYSTATE verbs, AVR untouched).
 
-## Volume sync (shairport `.Volume` <-> AVR volume/mute, bidirectional)
+## Volume sync (shairport `RemoteControl.AirplayVolume` <-> AVR volume/mute, bidirectional)
 
 `volume_sync = on` (default `off`) makes the daemon the single hub that keeps the
 AirPlay volume and the receiver's volume/mute in step in BOTH directions, while
@@ -181,12 +181,18 @@ the audio stays full-range digital (the receiver does the attenuation).
    daemon's cap (the full-volume incident). With no mixer configured, shairport
    touches no hardware and only the daemon sets the receiver's volume.
 
-shairport still tracks the AirPlay volume and exposes it, writable, on D-Bus
-(`org.gnome.ShairportSync` `.Volume`, dB, `-144`=mute). `avr-power` keeps its own
+**The right D-Bus property (this was the other bug):** the sender's AirPlay volume
+is on **`org.gnome.ShairportSync.RemoteControl.AirplayVolume`** (double, dB), which
+is populated from the `pvol` metadata and TRACKS THE SENDER LIVE -- verified even
+under `ignore_volume_control=yes` (shairport still sends `pvol` with the sender's
+volume as the first field). The main-interface `org.gnome.ShairportSync.Volume`
+only changes on writes/init (it sat frozen at -24 through every test) -- do NOT
+read it. To move the sender's slider, CALL the method
+`RemoteControl.SetAirplayVolume(d)` (not a property set). `avr-power` keeps its own
 control handle for power/input, so removing the volume mixer does not affect it.
 
 ### Flow
-* **Phone -> AVR:** the watcher's `Volume` handler feeds `VolumeSync::on_airplay_db`.
+* **Phone -> AVR:** the watcher's `AirplayVolume` handler feeds `VolumeSync::on_airplay_db`.
   AirPlay dB (`-30..0`, `-144`=mute) maps to 0-100 percent (see `volume_map.hpp`),
   clamped to `max_volume`, and is sent to the receiver -- coalesced and
   rate-limited (`volume_coalesce_ms`, default 150 ms) so a fast slider drag
@@ -195,8 +201,9 @@ control handle for power/input, so removing the volume mixer does not affect it.
   (`Backend::event_fd()`); when it is readable the daemon calls
   `Backend::pump_events()`, which classifies the receiver's unsolicited
   `MVxx`/`MUON`/`MUOFF` pushes (from its remote, HDMI-CEC or another controller)
-  and reports the change. The daemon maps it back to dB and writes shairport's
-  `.Volume`, which shairport reports to the sender so the phone slider follows.
+  and reports the change. The daemon maps it back to dB and calls
+  `RemoteControl.SetAirplayVolume`, which shairport reports to the sender so the
+  phone slider follows.
 * **Echo suppression:** `VolumeSync` remembers each value it pushes to a side and
   consumes the one matching echo that comes back, so a change is never bounced to
   the side it came from (this is what would otherwise oscillate / feel jerky).
@@ -231,5 +238,5 @@ after-push are covered by integration tests against the mock (which grows
 `XPUSHMV`/`XPUSHMU` hooks to inject an external change). End-to-end with a real
 phone is NOT yet confirmed, because pyatv cannot open a streaming session against
 this shairport AP2 build; the D-Bus write path was verified live (writing
-`.Volume` round-trips and, with `ignore_volume_control=yes`, does not move the
+`AirplayVolume` tracks the sender live even under `ignore_volume_control=yes` (pvol); verified end-to-end with a PipeWire RAOP sender on claude-wsb -- forward (AirplayVolume->Denon, capped) and reverse (external Denon change->SetAirplayVolume->phone). Does not move the
 Denon).
