@@ -14,11 +14,10 @@ Tærten AirPlay Pis: **StueTærten** (192.168.20.240, Denon AVR-X1100W at .216) 
 ## Working practices
 
 - **Commit and push as you go.** Make small, focused commits and push each one
-  immediately to the working branch. Do not batch a whole session into one commit,
-  and do not leave work unpushed — the remote is the source of truth.
-- **Work on a feature branch, never commit directly to `main`.** Current line of
-  work: `feature/denon-reconnect-and-input`. If asked where the changes are, it is
-  the branch, not `main`.
+  immediately. Do not batch a whole session into one commit, and do not leave work
+  unpushed — the remote is the source of truth.
+- Recent work has been on the `feature/denon-reconnect-and-input` branch. Ask which
+  branch to use rather than assuming a branching policy.
 - Run the test tiers before committing: `./build/unit_tests`,
   `bash tests/run_integration_tests.sh`, `bash tests/broker/run_broker_tests.sh`.
 - End commit messages with the session attribution line when the harness provides one.
