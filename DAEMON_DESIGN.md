@@ -218,6 +218,19 @@ straight past it; hence rule 2 above plus this belt-and-braces clamp.) On playba
 start the daemon snaps the receiver to the phone's current volume (capped) so the
 first note is at a safe, known level.
 
+### Reverse direction (AVR -> phone): a Denon limitation
+The forward path (phone -> AVR via `AirplayVolume`) is verified working and safe
+(cap holds). The reverse path (an external AVR volume change mirrored up to the
+phone) depends on the Denon PUSHING the change over the telnet session that the
+daemon holds. Verified on hardware: the Denon does NOT push volume changes made
+over its HTTP API (which is how Home Assistant's `denonavr` integration changes
+it) -- those are only visible by polling. Only the physical remote / front panel
+push unsolicited over telnet (not tested here -- needs someone at the unit). So
+HA-driven volume changes will NOT mirror to the phone via telnet pushes; the
+daemon's reverse mirror (`pump_events` -> `SetAirplayVolume`) fires only for
+telnet-pushing sources. Making HA->phone work would require the daemon to POLL
+the Denon volume periodically (not implemented; adds bus traffic).
+
 ### Async design
 Still a single-threaded `poll()` loop: the sd-bus fd and the Denon telnet fd are
 both folded into it (plus a timer for the coalesce flush). No boost-asio and no
