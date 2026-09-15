@@ -1,6 +1,0 @@
-martinmunk-avr-controld (0.4.0~dev1) stable; urgency=medium
-
-  * Initial packaging: Python avr-controld + Home Assistant MQTT bridge, shipped
-    as a bundled virtualenv (arch: all; all deps are pure Python).
-
- -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Mon, 15 Sep 2026 20:00:00 +0000

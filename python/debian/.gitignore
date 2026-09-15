@@ -1,0 +1,10 @@
+# debhelper build byproducts
+.debhelper/
+files
+*.substvars
+*.debhelper
+*.debhelper.log
+debhelper-build-stamp
+# per-package staging dir
+martinmunk-avr-controld/
+tmp/
