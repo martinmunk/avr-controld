@@ -27,7 +27,9 @@ from .backends.demo import DemoBackend
 from .mqtt.bridge import MqttBridge
 from .mqtt.entities import Device, sanitize
 from .mqtt.paho_client import PahoTransport
+from .power_policy import PowerPolicy
 from .protocol import avr_socket_path
+from .shairport import ShairportWatcher
 from .socket_server import SocketServer
 
 # Map a config backend name to the canonical socket "type" the C ALSA plugins
@@ -116,11 +118,42 @@ def main(argv: list[str] | None = None) -> int:
         username=cfg.get("mqtt_user") or None,
         password=cfg.get("mqtt_pass") or os.environ.get("MQTT_PASS"),
     )
+    # Reentrant: the socket dispatch holds the lock and calls the shairport
+    # snapshot provider, which also takes it; the power callbacks nest too.
+    lock = threading.RLock()
+
+    truthy = lambda v: str(v).lower() in ("1", "on", "yes", "true")  # noqa: E731
+
+    # ---- optional power policy (generic; not receiver-specific) ----------
+    policy = None
+    want_input = cfg.get("input", "")
+    if truthy(cfg.get("power_policy", "0")):
+        policy = PowerPolicy(off_grace_s=float(cfg.get("off_grace", "120")))
+
+    def apply_power(action):
+        if action is None:
+            return
+        with lock:
+            if action:
+                backend.set_power(True)
+                if want_input:
+                    backend.set_input(want_input)
+                log.info("power policy: ON%s", f" + input {want_input}" if want_input else "")
+            else:
+                backend.set_power(False)
+                log.info("power policy: OFF (grace elapsed)")
+
+    def feed_demand(name, active):
+        if policy is None:
+            return
+        with lock:
+            apply_power(policy.set_demand(name, active, time.monotonic()))
+
     bridge = MqttBridge(device, backend, transport,
                         ceiling=ceiling,
-                        discovery_prefix=cfg.get("discovery_prefix", "homeassistant"))
+                        discovery_prefix=cfg.get("discovery_prefix", "homeassistant"),
+                        on_demand=(feed_demand if policy is not None else None))
 
-    lock = threading.Lock()
     transport.on_connect = lambda: _locked(lock, bridge.announce)
     transport.on_message = lambda t, p: _locked(lock, lambda: bridge.handle_message(t, p))
 
@@ -128,21 +161,32 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
 
-    # Unix-socket server so the ALSA plugins and avr-cec-relay bind to this
-    # daemon. Path matches the C++/relay convention so existing clients find it.
+    # ---- optional shairport-sync watcher (play-state -> power demand) ----
+    watcher = None
+    if truthy(cfg.get("shairport", "0")):
+        watcher = ShairportWatcher(
+            on_playing=lambda p: feed_demand("airplay", p),
+            lock=lock,
+        )
+        watcher.start()
+
+    # ---- Unix-socket server (plugins + avr-cec-relay bind here) ----------
     kind = cfg.get("backend", "nad").lower()
     stype = cfg.get("socket_type") or _SOCKET_TYPE.get(kind, kind)
     socket_path = cfg.get("avr_socket") or avr_socket_path(stype, cfg)
-    srv = SocketServer(socket_path, backend, lock, ceiling, on_shutdown=stop.set)
+    srv = SocketServer(socket_path, backend, lock, ceiling, on_shutdown=stop.set,
+                       meta_provider=(watcher.snapshot if watcher else None),
+                       playstate_provider=(watcher.playstate if watcher else None))
     srv_ok = srv.start_listening()
     if srv_ok:
         srv.start()
     else:
         log.warning("socket server disabled (bind failed on %s)", socket_path)
 
-    log.info("starting: backend=%s node_id=%s mqtt=%s:%s ceiling=%s socket=%s",
-             backend.name, node_id, transport.host, transport.port, ceiling,
-             socket_path if srv_ok else "(none)")
+    log.info("starting: backend=%s node_id=%s mqtt=%s:%s ceiling=%s socket=%s "
+             "power_policy=%s shairport=%s", backend.name, node_id, transport.host,
+             transport.port, ceiling, socket_path if srv_ok else "(none)",
+             policy is not None, watcher is not None)
     transport.start()
     try:
         while not stop.wait(poll_interval):
@@ -152,8 +196,12 @@ def main(argv: list[str] | None = None) -> int:
                 ev = backend.poll_events()
                 if not ev.empty():
                     log.debug("push event: %s", ev)
+                if policy is not None:
+                    apply_power(policy.tick(time.monotonic()))
                 bridge.publish_state()
     finally:
+        if watcher:
+            watcher.stop()
         if srv_ok:
             srv.stop()
         with lock:
@@ -163,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _locked(lock: threading.Lock, fn):
+def _locked(lock, fn):
     with lock:
         fn()
 

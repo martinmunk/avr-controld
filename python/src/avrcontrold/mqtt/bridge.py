@@ -39,15 +39,21 @@ def _read(backend: Backend, key: str):
 
 class MqttBridge:
     def __init__(self, device: E.Device, backend: Backend, client: MqttClient,
-                 *, ceiling: int = 100, discovery_prefix: str = "homeassistant"):
+                 *, ceiling: int = 100, discovery_prefix: str = "homeassistant",
+                 on_demand=None):
         self.device = device
         self.backend = backend
         self.client = client
         self.ceiling = ceiling
         self.prefix = discovery_prefix
+        # Generic power-policy hook: HA can publish avrcontrold/<node>/demand/<name>
+        # = ON/OFF (e.g. "tv" when the TV/Shield is active) to keep the receiver
+        # powered. Backend-agnostic; the daemon feeds these to the PowerPolicy.
+        self.on_demand = on_demand
         self.entities = E.build_entities(device, backend.capabilities(),
                                          backend.get_inputs())
         self._by_cmd = {e.command_topic: e for e in self.entities if e.command_topic}
+        self._demand_prefix = E.base_topic(device.node_id) + "/demand/"
         self._last: dict[str, str] = {}
 
     # ---- lifecycle ------------------------------------------------------
@@ -58,6 +64,8 @@ class MqttBridge:
                                 E.discovery_payload(e), retain=True)
             if e.command_topic:
                 self.client.subscribe(e.command_topic)
+        if self.on_demand:
+            self.client.subscribe(self._demand_prefix + "+")
         self.set_availability(True)
         self.publish_state(force=True)
 
@@ -78,6 +86,11 @@ class MqttBridge:
 
     # ---- commands in ----------------------------------------------------
     def handle_message(self, topic: str, payload: str) -> None:
+        if self.on_demand and topic.startswith(self._demand_prefix):
+            name = topic[len(self._demand_prefix):]
+            active = payload.strip().upper() in ("ON", "1", "TRUE")
+            self.on_demand(name, active)
+            return
         ent = self._by_cmd.get(topic)
         if ent is None:
             log.debug("ignoring message on unmapped topic %s", topic)
