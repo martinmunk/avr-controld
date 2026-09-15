@@ -85,3 +85,12 @@ def test_demand_verb():
     # no handler -> benign
     assert P.dispatch(be, "DEMAND cec 1", 100) == "OK -"
     assert P.dispatch(be, "DEMAND", 100, demand_handler=h) == "ERR bad DEMAND"
+
+
+def test_raw_verb():
+    be = FakeBackend()
+    be.raw = lambda c: f"echo:{c}"                 # backend that supports raw
+    assert P.dispatch(be, "RAW Main.Model?", 100) == "OK echo:Main.Model?"
+    assert P.dispatch(be, "RAW Source1.Name?", 100) == "OK echo:Source1.Name?"
+    assert P.dispatch(be, "RAW", 100) == "ERR bad RAW"
+    assert P.dispatch(FakeBackend(), "RAW X", 100) == "OK -"   # base default: unsupported

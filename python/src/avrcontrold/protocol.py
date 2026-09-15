@@ -117,6 +117,15 @@ def dispatch(backend: Backend, line: str, vol_ceiling: int,
         demand_handler(name, active, inp)
         return "OK"
 
+    if verb == "RAW":
+        # RAW <command> -- send a raw protocol command to the receiver, return its
+        # raw reply. For device config/exploration (NAD source names/inputs etc).
+        if len(parts) < 2:
+            return "ERR bad RAW"
+        cmd = line.split(None, 1)[1]
+        reply = backend.raw(cmd)
+        return "OK " + (reply if reply is not None else "-")
+
     if verb == "META":
         return "OK " + (meta_provider() if meta_provider else "-")
     if verb == "PLAYSTATE":

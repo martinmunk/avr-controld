@@ -99,6 +99,16 @@ class Backend(ABC):
     def set_input(self, name: str) -> bool:
         return False
 
+    # ---- raw passthrough (optional) ------------------------------------
+    def raw(self, command: str) -> str | None:
+        """Send a raw protocol command to the receiver and return its raw reply.
+
+        For exploration and device configuration (e.g. NAD Source names/inputs)
+        that the typed methods don't cover. None if unsupported/failed. Bypasses
+        the volume clamp -- callers must be careful.
+        """
+        return None
+
     # ---- real-time push (optional) -------------------------------------
     def poll_events(self) -> PushEvent:
         """Consume any unsolicited state the receiver pushed. Default: none."""

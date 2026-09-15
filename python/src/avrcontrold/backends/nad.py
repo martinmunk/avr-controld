@@ -171,6 +171,20 @@ class NADBackend(Backend):
         rx = self._guard()
         return bool(rx) and self._ok(lambda: rx.main_source("=", name))
 
+    # ---- raw passthrough (device config / exploration) ------------------
+    def raw(self, command: str) -> str | None:
+        rx = self._guard()
+        if rx is None:
+            return None
+        try:
+            reply = rx.transport.communicate(command)
+            self._connected = True
+            return reply
+        except Exception as exc:
+            log.warning("NAD: raw '%s' failed: %s", command, exc)
+            self._connected = False
+            return None
+
     # ---- helper ---------------------------------------------------------
     def _ok(self, fn) -> bool:
         try:
