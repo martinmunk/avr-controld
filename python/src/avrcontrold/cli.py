@@ -27,6 +27,17 @@ from .backends.demo import DemoBackend
 from .mqtt.bridge import MqttBridge
 from .mqtt.entities import Device, sanitize
 from .mqtt.paho_client import PahoTransport
+from .protocol import avr_socket_path
+from .socket_server import SocketServer
+
+# Map a config backend name to the canonical socket "type" the C ALSA plugins
+# and avr-cec-relay use, so the derived socket path matches theirs.
+_SOCKET_TYPE = {
+    "nad": "nad_serial", "nad_serial": "nad_serial",
+    "denon": "denon_ip", "denon_ip": "denon_ip",
+    "opalum": "opalum_serial", "opalum_serial": "opalum_serial",
+    "demo": "demo",
+}
 
 log = logging.getLogger("avrcontrold")
 
@@ -117,8 +128,21 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
 
-    log.info("starting: backend=%s node_id=%s mqtt=%s:%s ceiling=%s",
-             backend.name, node_id, transport.host, transport.port, ceiling)
+    # Unix-socket server so the ALSA plugins and avr-cec-relay bind to this
+    # daemon. Path matches the C++/relay convention so existing clients find it.
+    kind = cfg.get("backend", "nad").lower()
+    stype = cfg.get("socket_type") or _SOCKET_TYPE.get(kind, kind)
+    socket_path = cfg.get("avr_socket") or avr_socket_path(stype, cfg)
+    srv = SocketServer(socket_path, backend, lock, ceiling, on_shutdown=stop.set)
+    srv_ok = srv.start_listening()
+    if srv_ok:
+        srv.start()
+    else:
+        log.warning("socket server disabled (bind failed on %s)", socket_path)
+
+    log.info("starting: backend=%s node_id=%s mqtt=%s:%s ceiling=%s socket=%s",
+             backend.name, node_id, transport.host, transport.port, ceiling,
+             socket_path if srv_ok else "(none)")
     transport.start()
     try:
         while not stop.wait(poll_interval):
@@ -130,6 +154,8 @@ def main(argv: list[str] | None = None) -> int:
                     log.debug("push event: %s", ev)
                 bridge.publish_state()
     finally:
+        if srv_ok:
+            srv.stop()
         with lock:
             bridge.set_availability(False)
         transport.stop()
