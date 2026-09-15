@@ -18,7 +18,7 @@ nad = ["nad-receiver>=0.3"]
 denon = ["denonavr>=0.11"]
 mqtt = ["paho-mqtt>=1.6", "ha-mqtt-discoverable>=0.17"]
 dbus = ["dasbus>=1.7"]
-dev = ["pytest>=7", "pytest-asyncio>=0.23"]
+dev = ["pytest>=7"]
 
 [project.scripts]
 avr-controld = "avrcontrold.cli:main"
@@ -28,4 +28,3 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"
