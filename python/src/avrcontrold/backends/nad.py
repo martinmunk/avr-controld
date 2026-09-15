@@ -75,7 +75,10 @@ class NADBackend(Backend):
         self._rx = receiver
         self._min_db = float(min_db)
         self._max_db = float(max_db)
-        self._sources = list(sources or [])
+        self._sources = list(sources or [])       # manual override (names)
+        self._num_to_name: dict[int, str] = {}     # discovered Source<n>.Name
+        self._name_to_num: dict[str, int] = {}
+        self._enabled_nums: list[int] = []
         self._connected = receiver is not None
 
     # ---- dB <-> percent -------------------------------------------------
@@ -103,7 +106,25 @@ class NADBackend(Backend):
         except Exception as exc:
             log.warning("NAD: probe failed: %s", exc)
             self._connected = False
+        if self._connected and not self._sources and not self._num_to_name:
+            self._discover_sources()
         return self._connected
+
+    def _discover_sources(self) -> None:
+        """Read Source<n>.Name/Enabled so HA gets a source selector with the NAD's
+        real names, and set_input can map a name back to its number."""
+        for n in range(1, 11):
+            name = self._q(f"Source{n}.Name")
+            if not name:
+                continue
+            self._num_to_name[n] = name
+            self._name_to_num[name] = n
+            en = self._q(f"Source{n}.Enabled")
+            if en is None or en.strip().lower() == "yes":
+                self._enabled_nums.append(n)
+        if self._num_to_name:
+            log.info("NAD: discovered %d sources (%d enabled)",
+                     len(self._num_to_name), len(self._enabled_nums))
 
     def is_connected(self) -> bool:
         return self._connected
@@ -115,8 +136,8 @@ class NADBackend(Backend):
 
     def capabilities(self) -> Capabilities:
         return Capabilities(absolute=True, query=True, mute=True,
-                            input_select=bool(self._sources), power=True,
-                            min_volume=0, max_volume=100)
+                            input_select=bool(self._sources or self._num_to_name),
+                            power=True, min_volume=0, max_volume=100)
 
     # ---- volume ---------------------------------------------------------
     def get_volume(self) -> int | None:
@@ -180,7 +201,9 @@ class NADBackend(Backend):
 
     # ---- input / source -------------------------------------------------
     def get_inputs(self) -> list[str]:
-        return list(self._sources)
+        if self._sources:
+            return list(self._sources)
+        return [self._num_to_name[n] for n in self._enabled_nums]
 
     def get_input(self) -> str | None:
         rx = self._guard()
@@ -192,11 +215,22 @@ class NADBackend(Backend):
             log.warning("NAD: get_input failed: %s", exc)
             self._connected = False
             return None
-        return None if v is None else str(v)
+        if v is None:
+            return None
+        try:
+            return self._num_to_name.get(int(v), str(v))
+        except (ValueError, TypeError):
+            return str(v)
 
     def set_input(self, name: str) -> bool:
         rx = self._guard()
-        return bool(rx) and self._ok(lambda: rx.main_source("=", name))
+        if rx is None:
+            return False
+        # Accept a discovered source name, or a raw number/string.
+        target = name
+        if name in self._name_to_num:
+            target = str(self._name_to_num[name])
+        return self._ok(lambda: rx.main_source("=", target))
 
     # ---- extra properties (tone/zone2/sleep/info) -----------------------
     def _q(self, var: str) -> str | None:

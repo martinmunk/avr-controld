@@ -185,3 +185,18 @@ def test_raw_passthrough():
     _, be = make()
     assert be.raw("Main.Model?") == "Main.Model=T757"
     assert be.raw("Main.Bass=3") == "Main.Bass=3"
+
+
+def test_source_discovery_maps_names_and_numbers():
+    rx = FakeNad(source="1")
+    rx.vars.update({"Source1.Name": "TV", "Source1.Enabled": "Yes",
+                    "Source2.Name": "AirPlay", "Source2.Enabled": "No",
+                    "Source3.Name": "CD", "Source3.Enabled": "Yes"})
+    be = NADBackend("/dev/ttyUSB0", receiver=rx)   # no manual sources -> discover
+    assert be.connect()
+    assert be.capabilities().input_select is True
+    assert be.get_inputs() == ["TV", "CD"]          # only enabled
+    assert be.get_input() == "TV"                    # current source 1 -> name
+    assert be.set_input("CD")                        # name -> number 3
+    assert rx.source == "3"
+    assert be.get_input() == "CD"
