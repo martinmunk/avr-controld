@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "avrcontrold"
+version = "0.4.0.dev0"
+description = "Python broker daemon that owns each AV receiver connection and bridges it to Home Assistant over MQTT"
+requires-python = ">=3.11"
+authors = [{ name = "Martin Munk Hansen" }]
+
+# Runtime deps are declared as extras so the offline test suite (pure logic +
+# injected fakes) needs none of them. Each backend / integration pulls its own.
+dependencies = []
+
+[project.optional-dependencies]
+nad = ["nad-receiver>=0.3"]
+denon = ["denonavr>=0.11"]
+mqtt = ["paho-mqtt>=1.6", "ha-mqtt-discoverable>=0.17"]
+dbus = ["dasbus>=1.7"]
+dev = ["pytest>=7", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+avr-controld = "avrcontrold.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
