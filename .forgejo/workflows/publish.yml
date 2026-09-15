@@ -53,6 +53,11 @@ jobs:
           apt-get update -qq
           # libstdc++6:arm64 needed for dpkg-shlibdeps on the C++ objects
           apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libsystemd-dev:arm64 libstdc++6:arm64 libasound2-dev libsystemd-dev
+          # trixie's pkgconf dropped the pkg-config crosswrapper, so the
+          # aarch64-linux-gnu-pkg-config that dh_auto_configure invokes is gone
+          # and libsystemd is "not found" -> cmake configure fails. Recreate it.
+          printf '#!/bin/sh\nexport PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig\nexec pkgconf "$@"\n' > /usr/bin/aarch64-linux-gnu-pkg-config
+          chmod +x /usr/bin/aarch64-linux-gnu-pkg-config
 
       - name: Install native build dependencies (amd64)
         if: matrix.arch == 'amd64'
