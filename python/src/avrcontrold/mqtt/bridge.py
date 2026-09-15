@@ -50,8 +50,10 @@ class MqttBridge:
         # = ON/OFF (e.g. "tv" when the TV/Shield is active) to keep the receiver
         # powered. Backend-agnostic; the daemon feeds these to the PowerPolicy.
         self.on_demand = on_demand
-        self.entities = E.build_entities(device, backend.capabilities(),
-                                         backend.get_inputs())
+        self._extra_specs = {s.key: s for s in backend.extras()}
+        self.entities = (E.build_entities(device, backend.capabilities(),
+                                          backend.get_inputs())
+                         + E.build_extra_entities(device, backend.extras()))
         self._by_cmd = {e.command_topic: e for e in self.entities if e.command_topic}
         self._demand_prefix = E.base_topic(device.node_id) + "/demand/"
         self._last: dict[str, str] = {}
@@ -76,7 +78,10 @@ class MqttBridge:
     # ---- state out ------------------------------------------------------
     def publish_state(self, force: bool = False) -> None:
         for e in self.entities:
-            payload = E.encode_state(e.key, _read(self.backend, e.key))
+            if e.key in self._extra_specs:
+                payload = E.encode_extra(e.component, self.backend.get_extra(e.key))
+            else:
+                payload = E.encode_state(e.key, _read(self.backend, e.key))
             if payload is None:
                 continue
             if not force and self._last.get(e.key) == payload:
@@ -95,12 +100,20 @@ class MqttBridge:
         if ent is None:
             log.debug("ignoring message on unmapped topic %s", topic)
             return
-        try:
-            value = E.decode_command(ent.key, payload)
-        except ValueError as exc:
-            log.warning("bad command on %s: %s", topic, exc)
-            return
-        self._apply(ent.key, value)
+        if ent.key in self._extra_specs:
+            try:
+                value = E.decode_extra(ent.component, payload)
+            except ValueError as exc:
+                log.warning("bad extra command on %s: %s", topic, exc)
+                return
+            self.backend.set_extra(ent.key, value)
+        else:
+            try:
+                value = E.decode_command(ent.key, payload)
+            except ValueError as exc:
+                log.warning("bad command on %s: %s", topic, exc)
+                return
+            self._apply(ent.key, value)
         # Reflect the resulting state promptly.
         self.publish_state()
 

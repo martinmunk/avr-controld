@@ -5,6 +5,21 @@ import pytest
 from avrcontrold.backends.nad import NADBackend
 
 
+class _FakeTransport:
+    def __init__(self, nad):
+        self.nad = nad
+    def communicate(self, cmd):
+        self.nad._maybe_raise()
+        if cmd.endswith("?"):
+            var = cmd[:-1]
+            return f"{var}={self.nad.vars.get(var, '')}" if var in self.nad.vars else ""
+        if "=" in cmd:
+            var, val = cmd.split("=", 1)
+            self.nad.vars[var] = val
+            return cmd
+        return ""
+
+
 class FakeNad:
     """Mimics nad_receiver.NADReceiver operator semantics in memory."""
     def __init__(self, db=-40.0, power="On", mute="Off", source="Source 1"):
@@ -13,6 +28,10 @@ class FakeNad:
         self.mute = mute
         self.source = source
         self.raise_next = False
+        self.vars = {"Main.Bass": "-2", "Main.Treble": "0", "Main.Model": "T757",
+                     "Zone2.Power": "Off", "Zone2.Volume": "-20", "Main.Sleep": "0",
+                     "Main.ListeningMode": "None"}
+        self.transport = _FakeTransport(self)
 
     def _maybe_raise(self):
         if self.raise_next:
@@ -140,3 +159,29 @@ def test_io_error_marks_disconnected_and_unknown():
     rx.raise_next = True
     assert be.get_volume() is None
     assert be.is_connected() is False
+
+
+# ---- extras (via raw/transport) --------------------------------------------
+def test_extras_list_and_read():
+    _, be = make()
+    keys = {e.key for e in be.extras()}
+    assert {"bass", "treble", "zone2_power", "zone2_volume", "model"} <= keys
+    assert be.get_extra("bass") == -2          # int
+    assert be.get_extra("model") == "T757"     # str
+    assert be.get_extra("zone2_power") is False  # "Off" -> bool
+
+
+def test_extras_write():
+    rx, be = make()
+    assert be.set_extra("bass", 4)
+    assert rx.vars["Main.Bass"] == "4"
+    assert be.get_extra("bass") == 4
+    assert be.set_extra("zone2_power", True)
+    assert rx.vars["Zone2.Power"] == "On"
+    assert be.get_extra("zone2_power") is True
+
+
+def test_raw_passthrough():
+    _, be = make()
+    assert be.raw("Main.Model?") == "Main.Model=T757"
+    assert be.raw("Main.Bass=3") == "Main.Bass=3"

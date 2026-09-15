@@ -27,6 +27,24 @@ class Capabilities:
     max_volume: int = 100
 
 
+@dataclass(frozen=True)
+class ExtraSpec:
+    """Describes one extra property a backend exposes beyond the core set, so the
+    MQTT bridge can build an HA entity for it generically ("expose all the
+    things"). Pure metadata; values are read/written via get_extra/set_extra.
+    """
+    key: str                       # unique, e.g. "bass", "zone2_volume"
+    component: str                 # number | switch | select | sensor
+    name: str                      # HA friendly name, e.g. "Bass"
+    writable: bool = False
+    min: float | None = None       # number
+    max: float | None = None
+    step: float | None = None
+    unit: str | None = None
+    options: list[str] | None = None   # select
+    icon: str | None = None
+
+
 @dataclass
 class PushEvent:
     """Unsolicited state a receiver reported on its own (remote/CEC/other app).
@@ -97,6 +115,18 @@ class Backend(ABC):
         return None
 
     def set_input(self, name: str) -> bool:
+        return False
+
+    # ---- extra properties (optional; "expose all the things") ----------
+    def extras(self) -> list["ExtraSpec"]:
+        """Extra properties this backend exposes (tone/zone2/etc). Default: none."""
+        return []
+
+    def get_extra(self, key: str):
+        """Current value of an extra property (typed per its component), or None."""
+        return None
+
+    def set_extra(self, key: str, value) -> bool:
         return False
 
     # ---- raw passthrough (optional) ------------------------------------

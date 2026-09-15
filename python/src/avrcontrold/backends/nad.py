@@ -17,7 +17,34 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional, Protocol
 
-from .base import Backend, Capabilities, PushEvent
+from .base import Backend, Capabilities, ExtraSpec, PushEvent
+
+# Extra NAD properties exposed beyond the core set (over the full RS232 protocol,
+# which nad_receiver's command table does not cover -- we drive it via raw).
+_NAD_EXTRAS = [
+    ExtraSpec("bass", "number", "Bass", writable=True, min=-10, max=10, step=1,
+              unit="dB", icon="mdi:music-clef-bass"),
+    ExtraSpec("treble", "number", "Treble", writable=True, min=-10, max=10, step=1,
+              unit="dB", icon="mdi:music-note"),
+    ExtraSpec("zone2_power", "switch", "Zone 2 Power", writable=True, icon="mdi:power"),
+    ExtraSpec("zone2_volume", "number", "Zone 2 Volume", writable=True, min=-90, max=0,
+              step=1, unit="dB", icon="mdi:volume-high"),
+    ExtraSpec("zone2_mute", "switch", "Zone 2 Mute", writable=True, icon="mdi:volume-off"),
+    ExtraSpec("sleep", "number", "Sleep Timer", writable=True, min=0, max=90, step=15,
+              unit="min", icon="mdi:timer"),
+    ExtraSpec("listening_mode", "sensor", "Listening Mode", icon="mdi:surround-sound"),
+    ExtraSpec("dimmer", "sensor", "Display Dimmer", icon="mdi:brightness-6"),
+    ExtraSpec("model", "sensor", "Model", icon="mdi:information"),
+    ExtraSpec("version", "sensor", "Firmware", icon="mdi:information"),
+]
+# key -> (NAD variable, type)
+_NAD_EXTRA_VAR = {
+    "bass": ("Main.Bass", "int"), "treble": ("Main.Treble", "int"),
+    "zone2_power": ("Zone2.Power", "bool"), "zone2_volume": ("Zone2.Volume", "int"),
+    "zone2_mute": ("Zone2.Mute", "bool"), "sleep": ("Main.Sleep", "int"),
+    "listening_mode": ("Main.ListeningMode", "str"), "dimmer": ("Main.Dimmer", "str"),
+    "model": ("Main.Model", "str"), "version": ("Main.Version", "str"),
+}
 
 log = logging.getLogger(__name__)
 
@@ -170,6 +197,48 @@ class NADBackend(Backend):
     def set_input(self, name: str) -> bool:
         rx = self._guard()
         return bool(rx) and self._ok(lambda: rx.main_source("=", name))
+
+    # ---- extra properties (tone/zone2/sleep/info) -----------------------
+    def _q(self, var: str) -> str | None:
+        r = self.raw(var + "?")
+        return r.split("=", 1)[1] if (r and "=" in r) else None
+
+    def _s(self, var: str, value: str) -> bool:
+        r = self.raw(f"{var}={value}")
+        return bool(r and "=" in r)
+
+    def extras(self) -> list[ExtraSpec]:
+        return list(_NAD_EXTRAS)
+
+    def get_extra(self, key: str):
+        spec = _NAD_EXTRA_VAR.get(key)
+        if spec is None:
+            return None
+        var, typ = spec
+        v = self._q(var)
+        if v is None:
+            return None
+        if typ == "int":
+            try:
+                return int(v)
+            except ValueError:
+                return None
+        if typ == "bool":
+            return v.strip().lower() == "on"
+        return v
+
+    def set_extra(self, key: str, value) -> bool:
+        spec = _NAD_EXTRA_VAR.get(key)
+        if spec is None:
+            return False
+        var, typ = spec
+        if typ == "bool":
+            val = "On" if value in (True, 1, "1", "on", "ON", "true", "True") else "Off"
+        elif typ == "int":
+            val = str(int(value))
+        else:
+            val = str(value)
+        return self._s(var, val)
 
     # ---- raw passthrough (device config / exploration) ------------------
     def raw(self, command: str) -> str | None:

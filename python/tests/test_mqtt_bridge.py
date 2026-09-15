@@ -126,3 +126,28 @@ def test_discovery_payload_valid_json():
     for t, p, _ in cl.published:
         if t.endswith("/config"):
             json.loads(p)                 # must be valid JSON
+
+
+def test_extra_entities_published_and_states():
+    be, cl, br = make()
+    br.announce()
+    disc = [t for t, _, r in cl.published if t.endswith("/config")]
+    assert any("/number/nad_serial__dev_ttyUSB0/bass/config" in t for t in disc)
+    assert any("/sensor/nad_serial__dev_ttyUSB0/model/config" in t for t in disc)
+    assert cl.last("avrcontrold/nad_serial__dev_ttyUSB0/bass/state") == "0"
+    assert cl.last("avrcontrold/nad_serial__dev_ttyUSB0/model/state") == "FakeAmp"
+
+
+def test_extra_command_sets_backend():
+    be, cl, br = make()
+    br.announce()
+    br.handle_message("avrcontrold/nad_serial__dev_ttyUSB0/bass/set", "5")
+    assert be.get_extra("bass") == 5
+    assert cl.last("avrcontrold/nad_serial__dev_ttyUSB0/bass/state") == "5"
+
+
+def test_extra_sensor_is_read_only():
+    be, cl, br = make()
+    br.announce()
+    assert not any(t.endswith("/model/set") for t in cl.subscriptions)
+    assert any(t.endswith("/bass/set") for t in cl.subscriptions)   # number is writable

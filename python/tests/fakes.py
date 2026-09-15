@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from avrcontrold.backends.base import Backend, Capabilities, PushEvent
+from avrcontrold.backends.base import Backend, Capabilities, ExtraSpec, PushEvent
 
 
 class FakeBackend(Backend):
@@ -20,6 +20,7 @@ class FakeBackend(Backend):
         self._inputs = inputs or ["TV", "CD", "Stream"]
         self._input = current_input
         self._pending = PushEvent()
+        self._bass = 0
         self.calls: list[tuple] = []
 
     def capabilities(self) -> Capabilities:
@@ -88,6 +89,27 @@ class FakeBackend(Backend):
             return False
         self._input = name
         return True
+
+    # ---- extras -----------------------------------------------------
+    def extras(self):
+        return [
+            ExtraSpec("bass", "number", "Bass", writable=True, min=-10, max=10, step=1, unit="dB"),
+            ExtraSpec("model", "sensor", "Model"),
+        ]
+
+    def get_extra(self, key):
+        if key == "bass":
+            return self._bass
+        if key == "model":
+            return "FakeAmp"
+        return None
+
+    def set_extra(self, key, value):
+        self.calls.append(("set_extra", key, value))
+        if key == "bass":
+            self._bass = int(value)
+            return True
+        return False
 
     # test helper: queue an unsolicited change
     def push(self, event: PushEvent) -> None:

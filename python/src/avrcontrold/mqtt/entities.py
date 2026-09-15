@@ -122,6 +122,53 @@ def build_entities(device: Device, caps: Capabilities,
     return ents
 
 
+def build_extra_entities(device: Device, specs) -> list[Entity]:
+    """HA entities for a backend's extra properties (ExtraSpec list)."""
+    ents: list[Entity] = []
+    for s in specs:
+        cfg, state, cmd = _common(device, s.key, s.component)
+        cfg["name"] = s.name
+        if s.icon:
+            cfg["icon"] = s.icon
+        if s.component == "number":
+            if s.min is not None:
+                cfg["min"] = s.min
+            if s.max is not None:
+                cfg["max"] = s.max
+            cfg["step"] = s.step or 1
+            cfg["mode"] = "box"
+            if s.unit:
+                cfg["unit_of_measurement"] = s.unit
+        elif s.component == "select":
+            cfg["options"] = list(s.options or [])
+        elif s.component == "switch":
+            cfg["payload_on"] = PAYLOAD_ON
+            cfg["payload_off"] = PAYLOAD_OFF
+        writable = s.writable and s.component != "sensor"
+        if writable:
+            cfg["command_topic"] = cmd
+        ents.append(Entity(s.component, s.key, cfg, state, cmd if writable else None))
+    return ents
+
+
+def encode_extra(component: str, value) -> str | None:
+    if value is None:
+        return None
+    if component == "switch":
+        return PAYLOAD_ON if value else PAYLOAD_OFF
+    return str(value)
+
+
+def decode_extra(component: str, payload: str):
+    p = payload.strip()
+    if component == "switch":
+        return p.upper() in (PAYLOAD_ON, "1", "TRUE")
+    if component == "number":
+        f = float(p)
+        return int(f) if f.is_integer() else f
+    return p
+
+
 def discovery_payload(entity: Entity) -> str:
     return json.dumps(entity.config, separators=(",", ":"), sort_keys=True)
 
