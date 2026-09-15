@@ -1,0 +1,18 @@
+[Unit]
+Description=avr-controld (Python) -- AVR broker + Home Assistant MQTT bridge
+Documentation=https://forgejo.servers.vejen.loc.martinmunk.com/martinmunk/alsa-avr-control
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/avr-controld/venv/bin/avr-controld --config /etc/avr-controld/config.conf
+Restart=always
+RestartSec=5
+# Serial backends (NAD/Opalum) need /dev/ttyUSB* (group dialout).
+SupplementaryGroups=dialout
+# Optional: keep the MQTT password out of the config file.
+# EnvironmentFile=-/etc/avr-controld/env
+
+[Install]
+WantedBy=multi-user.target

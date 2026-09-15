@@ -70,8 +70,10 @@ class PahoTransport:
 
     # ---- lifecycle ------------------------------------------------------
     def start(self) -> None:
+        # connect_async + loop_start so the daemon starts even if the broker is
+        # not up yet (e.g. at boot) and keeps retrying instead of crashing.
         self._c.reconnect_delay_set(min_delay=1, max_delay=30)
-        self._c.connect(self.host, self.port, self.keepalive)
+        self._c.connect_async(self.host, self.port, self.keepalive)
         self._c.loop_start()
 
     def stop(self) -> None:

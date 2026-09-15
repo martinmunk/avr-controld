@@ -1,0 +1,14 @@
+Package: martinmunk-avr-controld
+Version: 0.4.0~dev1
+Architecture: all
+Maintainer: Martin Munk Hansen <skiers.56.haggis@icloud.com>
+Installed-Size: 20531
+Depends: python3.13
+Section: sound
+Priority: optional
+Description: Python AVR broker daemon with Home Assistant MQTT bridge
+ avr-controld owns each AV receiver connection (NAD/Denon/...) and exposes it to
+ Home Assistant as basic MQTT entities (power/volume/mute/input). It ships a
+ self-contained virtualenv under /opt/avr-controld/venv with all Python
+ dependencies bundled (nad_receiver, paho-mqtt, pyserial), so nothing is pulled
+ from PyPI on the target and everything stays dpkg-tracked.

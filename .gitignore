@@ -41,3 +41,4 @@ __pycache__/
 # Temporary files
 tmp/
 obj-*/
+martinmunk-avr-controld_*
