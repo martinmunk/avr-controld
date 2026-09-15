@@ -137,6 +137,13 @@ target_compile_options(avr-cec-relay PRIVATE -Wall -Wextra -Wpedantic -O2)
 install(TARGETS avr-cec-relay
     RUNTIME DESTINATION bin
 )
+# Systemd unit (not auto-enabled) + example config for the CEC volume relay.
+install(FILES systemd/avr-cec-relay.service
+    DESTINATION lib/systemd/system
+)
+install(FILES examples/avr-cec-relay.conf
+    DESTINATION share/doc/martinmunk-alsa-control-avr/examples
+)
 
 # Connection broker daemon: owns the one real backend connection per device and
 # serves clients (the ALSA plugins, avr-power, amixer) over a Unix socket.
