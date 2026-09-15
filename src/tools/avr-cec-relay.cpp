@@ -167,6 +167,11 @@ int main(int argc, char** argv) {
     int max_volume = atoi(get("max_volume", "80").c_str());
     if (max_volume < 0) max_volume = 0; else if (max_volume > 100) max_volume = 100;
     __u8 tv_addr = (__u8)atoi(get("tv_addr", "0").c_str());
+    // The receiver input the TV feeds (e.g. the NAD optical the TV Toslink is on).
+    // When the TV/setup is active we tell the daemon to power on and select it.
+    std::string cec_input = get("cec_input", "");
+    int tv_poll_ms = atoi(get("tv_poll_secs", "10").c_str()) * 1000;
+    if (tv_poll_ms < 2000) tv_poll_ms = 10000;
 
     std::string sockpath = get("avr_socket", "");
     if (sockpath.empty()) sockpath = avr_socket_path(avr_type, {{"device", avr_dev}});
@@ -240,12 +245,36 @@ int main(int argc, char** argv) {
         cec_send(fd, my_la, to, p, 2);
     };
 
+    // Track whether the TV/setup is on. When it is, the receiver is needed
+    // (tell the daemon to power on + select the TV input); when it goes to
+    // standby, release the demand. The daemon's power policy arbitrates with
+    // other demands (e.g. AirPlay) and powers off only when nothing needs it.
+    // No Home Assistant involved.
+    int tv_on = -1;   // -1 unknown, 0 off, 1 on
+    auto set_tv = [&](int on) {
+        if (on == tv_on) return;
+        tv_on = on;
+        if (on) {
+            std::string c = "DEMAND cec 1";
+            if (!cec_input.empty()) c += " " + cec_input;
+            avr.cmd(c);
+            LOGI("TV active -> receiver demand ON" +
+                 (cec_input.empty() ? std::string() : " (input " + cec_input + ")"));
+        } else {
+            avr.cmd("DEMAND cec 0");
+            LOGI("TV standby -> receiver demand OFF");
+        }
+    };
+    const __u8 give_power[] = {CEC_MSG_GIVE_DEVICE_POWER_STATUS};
+    cec_send(fd, my_la, tv_addr, give_power, 1);   // initial TV power query
+
     struct pollfd pfd { fd, POLLIN, 0 };
     LOGI("relay running");
 
     while (true) {
-        int n = poll(&pfd, 1, -1);
+        int n = poll(&pfd, 1, tv_poll_ms);
         if (n < 0) { if (errno == EINTR) continue; break; }
+        if (n == 0) { cec_send(fd, my_la, tv_addr, give_power, 1); continue; }  // periodic TV power poll
         if (!(pfd.revents & POLLIN)) continue;
 
         struct cec_msg msg;
@@ -258,6 +287,7 @@ int main(int argc, char** argv) {
 
         switch (opcode) {
         case CEC_MSG_USER_CONTROL_PRESSED: {
+            set_tv(1);                                  // remote activity = setup in use
             if (msg.len < 3) break;
             __u8 ui = msg.msg[2];
             if (ui == CEC_OP_UI_CMD_VOLUME_UP) {
@@ -292,6 +322,26 @@ int main(int argc, char** argv) {
         case CEC_MSG_REPORT_ARC_INITIATED:
             LOGI("ARC initiated by TV");
             break;
+
+        // ---- TV/setup power tracking -> receiver power demand ----------
+        case CEC_MSG_REPORT_POWER_STATUS:
+            if (initiator == tv_addr && msg.len >= 3)
+                set_tv(msg.msg[2] == CEC_OP_POWER_STATUS_ON ? 1 : 0);
+            break;
+        case CEC_MSG_STANDBY:
+            set_tv(0);                                  // TV/all going to standby
+            break;
+        case CEC_MSG_ACTIVE_SOURCE:
+        case CEC_MSG_SET_STREAM_PATH:
+        case CEC_MSG_ROUTING_CHANGE:
+        case CEC_MSG_IMAGE_VIEW_ON:
+        case CEC_MSG_TEXT_VIEW_ON:
+            set_tv(1);                                  // a source became active
+            break;
+        case CEC_MSG_SET_SYSTEM_AUDIO_MODE:
+            if (msg.len >= 3 && msg.msg[2] != 0) set_tv(1);
+            break;
+
         default:
             break;                                     // let the kernel handle the rest
         }
