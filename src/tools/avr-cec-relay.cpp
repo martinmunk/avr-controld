@@ -182,38 +182,47 @@ int main(int argc, char** argv) {
     // Claim the Audio System logical address advertising the ARC-Rx feature.
     // The empty Device Features is exactly what made a Roku TV send nothing;
     // CEC_OP_FEAT_DEV_SOURCE_HAS_ARC_RX is what turns us into a real audio sink.
-    struct cec_log_addrs la;
-    memset(&la, 0, sizeof(la));
-    la.cec_version = CEC_OP_CEC_VERSION_2_0;
-    la.num_log_addrs = 1;
-    la.vendor_id = CEC_VENDOR_ID_NONE;
-    la.flags = CEC_LOG_ADDRS_FL_ALLOW_RC_PASSTHRU;
-    snprintf(la.osd_name, sizeof(la.osd_name), "%s", osd_name.c_str());
-    la.primary_device_type[0] = CEC_OP_PRIM_DEVTYPE_AUDIOSYSTEM;
-    la.log_addr_type[0]       = CEC_LOG_ADDR_TYPE_AUDIOSYSTEM;
-    la.all_device_types[0]    = CEC_OP_ALL_DEVTYPE_AUDIOSYSTEM;
-    la.features[0][0]         = CEC_OP_FEAT_DEV_SOURCE_HAS_ARC_RX;
+    // Initiator so we can transmit AND so CEC_ADAP_S_LOG_ADDRS is permitted
+    // (it returns -EBUSY unless the fd is in initiator mode); follower so the
+    // kernel hands us the messages it does not auto-answer (User Control
+    // Pressed, audio status, ARC). This MUST precede S_LOG_ADDRS.
+    __u32 mode = CEC_MODE_INITIATOR | CEC_MODE_FOLLOWER;
+    if (ioctl(fd, CEC_S_MODE, &mode) != 0) LOGW("CEC_S_MODE failed: " + std::string(strerror(errno)));
 
-    // S_LOG_ADDRS needs a valid physical address (live HDMI link). Retry so the
-    // relay can start before the TV/EDID is up and settle once it is.
+    struct cec_log_addrs want;
+    memset(&want, 0, sizeof(want));
+    want.cec_version = CEC_OP_CEC_VERSION_2_0;
+    want.num_log_addrs = 1;
+    want.vendor_id = CEC_VENDOR_ID_NONE;
+    want.flags = CEC_LOG_ADDRS_FL_ALLOW_RC_PASSTHRU;
+    snprintf(want.osd_name, sizeof(want.osd_name), "%s", osd_name.c_str());
+    want.primary_device_type[0] = CEC_OP_PRIM_DEVTYPE_AUDIOSYSTEM;
+    want.log_addr_type[0]       = CEC_LOG_ADDR_TYPE_AUDIOSYSTEM;
+    want.all_device_types[0]    = CEC_OP_ALL_DEVTYPE_AUDIOSYSTEM;
+    want.features[0][0]         = CEC_OP_FEAT_DEV_SOURCE_HAS_ARC_RX;
+
+    // Use the adapter as-is if it is already an audio system (e.g. configured by
+    // boot/cec-ctl); otherwise claim it. S_LOG_ADDRS needs a valid physical
+    // address (live HDMI link), so retry until the TV/EDID is up.
+    __u8 my_la = 0xff;
     for (int tries = 0; ; ++tries) {
         struct cec_log_addrs cur;
         memset(&cur, 0, sizeof(cur));
-        if (ioctl(fd, CEC_ADAP_S_LOG_ADDRS, &la) == 0 &&
-            ioctl(fd, CEC_ADAP_G_LOG_ADDRS, &cur) == 0 && cur.num_log_addrs > 0) {
-            la = cur;
-            break;
+        bool have = (ioctl(fd, CEC_ADAP_G_LOG_ADDRS, &cur) == 0 && cur.num_log_addrs > 0 &&
+                     cur.log_addr[0] != CEC_LOG_ADDR_INVALID &&
+                     cur.log_addr_type[0] == CEC_LOG_ADDR_TYPE_AUDIOSYSTEM);
+        if (!have) {
+            if (ioctl(fd, CEC_ADAP_S_LOG_ADDRS, &want) == 0 &&
+                ioctl(fd, CEC_ADAP_G_LOG_ADDRS, &cur) == 0 && cur.num_log_addrs > 0 &&
+                cur.log_addr[0] != CEC_LOG_ADDR_INVALID)
+                have = true;
         }
-        if (tries == 0) LOGW("waiting for CEC logical address (is HDMI connected?)");
+        if (have) { my_la = cur.log_addr[0]; break; }
+        if (tries == 0) LOGW("waiting for CEC logical address (is HDMI connected?): " +
+                             std::string(strerror(errno)));
         sleep(3);
     }
-    __u8 my_la = la.log_addr[0];
     LOGI("claimed logical address " + std::to_string((int)my_la) + " (Audio System)");
-
-    // Follower so the kernel hands us the messages it does not auto-answer
-    // (User Control Pressed, audio status, ARC), initiator so we can reply.
-    __u32 mode = CEC_MODE_INITIATOR | CEC_MODE_FOLLOWER;
-    if (ioctl(fd, CEC_S_MODE, &mode) != 0) LOGW("CEC_S_MODE failed: " + std::string(strerror(errno)));
 
     // Kick off ARC so the TV marks the link active and routes volume to us.
     const __u8 initiate_arc[] = {CEC_MSG_INITIATE_ARC};
