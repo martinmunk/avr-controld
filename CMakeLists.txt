@@ -127,6 +127,17 @@ install(TARGETS avr-power
     RUNTIME DESTINATION bin
 )
 
+# HDMI-CEC volume relay: presents the Pi as a CEC Audio System and relays
+# <User Control Pressed> volume/mute to avr-controld (e.g. NAD over RS232).
+# Header-only client (avr_protocol.hpp) + the kernel CEC uAPI; no ALSA needed.
+add_executable(avr-cec-relay
+    src/tools/avr-cec-relay.cpp
+)
+target_compile_options(avr-cec-relay PRIVATE -Wall -Wextra -Wpedantic -O2)
+install(TARGETS avr-cec-relay
+    RUNTIME DESTINATION bin
+)
+
 # Connection broker daemon: owns the one real backend connection per device and
 # serves clients (the ALSA plugins, avr-power, amixer) over a Unix socket.
 add_executable(avr-controld

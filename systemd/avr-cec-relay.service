@@ -1,0 +1,26 @@
+# HDMI-CEC volume relay -> avr-controld.
+#
+# Presents the Pi as a CEC Audio System (logical address 5) on the TV's HDMI
+# bus, initiates ARC, and relays <User Control Pressed> [Volume Up/Down/Mute]
+# to avr-controld, which owns the real receiver connection (e.g. NAD RS232).
+# Audio itself reaches the receiver over Toslink; this carries only volume.
+#
+# Configure via /etc/avr-cec-relay.conf (see examples/avr-cec-relay.conf).
+# Requires an avr-controld instance for the target receiver to be running.
+
+[Unit]
+Description=HDMI-CEC volume relay to avr-controld
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+# CEC_ADAP_S_LOG_ADDRS needs CAP_NET_ADMIN; /dev/cec0 is group 'video'.
+ExecStart=/usr/bin/avr-cec-relay
+Restart=always
+RestartSec=3
+# Read-only defaults live in the binary; the file only overrides them.
+# EnvironmentFile is not used -- config is the -o form / /etc/avr-cec-relay.conf.
+
+[Install]
+WantedBy=multi-user.target
