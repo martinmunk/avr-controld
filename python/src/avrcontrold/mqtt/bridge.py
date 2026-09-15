@@ -1,0 +1,106 @@
+"""Wire the entity model to an MQTT client and a backend.
+
+Transport-agnostic: the bridge calls an injected client's ``publish`` /
+``subscribe`` and is fed incoming messages via :meth:`handle_message`, so it is
+fully testable with a fake client and a fake backend. A thin paho adapter
+(added separately) supplies the real transport.
+
+The volume command path clamps through :func:`avrcontrold.volume.clamp_absolute`
+with the configured ceiling -- the same last-line-of-defence the socket protocol
+uses, so a bad MQTT number can never blast the receiver.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Protocol
+
+from ..backends.base import Backend
+from ..volume import clamp_absolute
+from . import entities as E
+
+log = logging.getLogger(__name__)
+
+
+class MqttClient(Protocol):
+    def publish(self, topic: str, payload: str, retain: bool = False) -> None: ...
+    def subscribe(self, topic: str) -> None: ...
+
+
+# key -> how to read it from the backend
+def _read(backend: Backend, key: str):
+    return {
+        "power": backend.get_power,
+        "volume": backend.get_volume,
+        "mute": backend.get_mute,
+        "input": backend.get_input,
+    }[key]()
+
+
+class MqttBridge:
+    def __init__(self, device: E.Device, backend: Backend, client: MqttClient,
+                 *, ceiling: int = 100, discovery_prefix: str = "homeassistant"):
+        self.device = device
+        self.backend = backend
+        self.client = client
+        self.ceiling = ceiling
+        self.prefix = discovery_prefix
+        self.entities = E.build_entities(device, backend.capabilities(),
+                                         backend.get_inputs())
+        self._by_cmd = {e.command_topic: e for e in self.entities if e.command_topic}
+        self._last: dict[str, str] = {}
+
+    # ---- lifecycle ------------------------------------------------------
+    def announce(self) -> None:
+        """Publish discovery configs (retained), subscribe commands, go online."""
+        for e in self.entities:
+            self.client.publish(E.discovery_topic(self.prefix, e, self.device.node_id),
+                                E.discovery_payload(e), retain=True)
+            if e.command_topic:
+                self.client.subscribe(e.command_topic)
+        self.set_availability(True)
+        self.publish_state(force=True)
+
+    def set_availability(self, online: bool) -> None:
+        self.client.publish(E.availability_topic(self.device.node_id),
+                            "online" if online else "offline", retain=True)
+
+    # ---- state out ------------------------------------------------------
+    def publish_state(self, force: bool = False) -> None:
+        for e in self.entities:
+            payload = E.encode_state(e.key, _read(self.backend, e.key))
+            if payload is None:
+                continue
+            if not force and self._last.get(e.key) == payload:
+                continue
+            self._last[e.key] = payload
+            self.client.publish(e.state_topic, payload, retain=True)
+
+    # ---- commands in ----------------------------------------------------
+    def handle_message(self, topic: str, payload: str) -> None:
+        ent = self._by_cmd.get(topic)
+        if ent is None:
+            log.debug("ignoring message on unmapped topic %s", topic)
+            return
+        try:
+            value = E.decode_command(ent.key, payload)
+        except ValueError as exc:
+            log.warning("bad command on %s: %s", topic, exc)
+            return
+        self._apply(ent.key, value)
+        # Reflect the resulting state promptly.
+        self.publish_state()
+
+    def _apply(self, key: str, value) -> None:
+        be = self.backend
+        if key == "power":
+            be.set_power(bool(value))
+        elif key == "mute":
+            be.set_mute(bool(value))
+        elif key == "input":
+            be.set_input(str(value))
+        elif key == "volume":
+            safe = clamp_absolute(int(value), self.ceiling)
+            if safe != value:
+                log.warning("volume %s clamped to ceiling -> %s", value, safe)
+            be.set_volume(safe)
