@@ -31,6 +31,7 @@ from .power_policy import PowerPolicy
 from .protocol import avr_socket_path
 from .shairport import ShairportWatcher
 from .socket_server import SocketServer
+from .volume import airplay_db_to_pct, clamp_absolute, is_airplay_mute
 
 # Map a config backend name to the canonical socket "type" the C ALSA plugins
 # and avr-cec-relay use, so the derived socket path matches theirs.
@@ -125,29 +126,56 @@ def main(argv: list[str] | None = None) -> int:
     truthy = lambda v: str(v).lower() in ("1", "on", "yes", "true")  # noqa: E731
 
     # ---- optional power policy (generic; not receiver-specific) ----------
+    # A "demand" is anything that needs the receiver on: shairport playing, or
+    # the CEC relay seeing the TV/setup active. Each demand may carry the input
+    # to select when it powers the receiver on (e.g. the NAD optical the TV or
+    # the Pi feeds). No Home Assistant involved -- the CEC relay feeds its demand
+    # over the socket (DEMAND verb), shairport feeds its own.
     policy = None
-    want_input = cfg.get("input", "")
+    airplay_input = cfg.get("airplay_input", "") or cfg.get("input", "")
     if truthy(cfg.get("power_policy", "0")):
         policy = PowerPolicy(off_grace_s=float(cfg.get("off_grace", "120")))
 
-    def apply_power(action):
-        if action is None:
-            return
-        with lock:
-            if action:
-                backend.set_power(True)
-                if want_input:
-                    backend.set_input(want_input)
-                log.info("power policy: ON%s", f" + input {want_input}" if want_input else "")
-            else:
-                backend.set_power(False)
-                log.info("power policy: OFF (grace elapsed)")
-
-    def feed_demand(name, active):
+    def feed_demand(name, active, inp=None):
         if policy is None:
             return
         with lock:
-            apply_power(policy.set_demand(name, active, time.monotonic()))
+            act = policy.set_demand(name, active, time.monotonic())
+            chosen = inp or (airplay_input if name == "airplay" else "")
+            if act is True:
+                backend.set_power(True)
+                if chosen:
+                    backend.set_input(chosen)
+                log.info("power: ON (demand %s)%s", name,
+                         f" + input {chosen}" if chosen else "")
+            elif act is False:
+                backend.set_power(False)
+                log.info("power: OFF (no demand, grace elapsed)")
+            elif active and chosen and backend.get_power():
+                # Already on; a (re)activated source wants its own input.
+                backend.set_input(chosen)
+                log.info("input -> %s (demand %s active)", chosen, name)
+
+    # ---- optional AirPlay volume sync (phone slider -> receiver) ---------
+    airplay_min_db = float(cfg.get("airplay_min_db", "-30"))
+    _airplay_muted = [False]
+
+    def on_airplay_volume(db):
+        if watcher is None:
+            return
+        with lock:
+            if not watcher.state.playing():
+                return                       # only while AirPlay is the source
+            if is_airplay_mute(db):
+                if not _airplay_muted[0]:
+                    backend.set_mute(True)
+                    _airplay_muted[0] = True
+                return
+            if _airplay_muted[0]:
+                backend.set_mute(False)
+                _airplay_muted[0] = False
+            pct = clamp_absolute(airplay_db_to_pct(db, min_db=airplay_min_db), ceiling)
+            backend.set_volume(pct)
 
     bridge = MqttBridge(device, backend, transport,
                         ceiling=ceiling,
@@ -166,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     if truthy(cfg.get("shairport", "0")):
         watcher = ShairportWatcher(
             on_playing=lambda p: feed_demand("airplay", p),
+            on_volume=on_airplay_volume,
             lock=lock,
         )
         watcher.start()
@@ -176,7 +205,8 @@ def main(argv: list[str] | None = None) -> int:
     socket_path = cfg.get("avr_socket") or avr_socket_path(stype, cfg)
     srv = SocketServer(socket_path, backend, lock, ceiling, on_shutdown=stop.set,
                        meta_provider=(watcher.snapshot if watcher else None),
-                       playstate_provider=(watcher.playstate if watcher else None))
+                       playstate_provider=(watcher.playstate if watcher else None),
+                       demand_handler=(feed_demand if policy is not None else None))
     srv_ok = srv.start_listening()
     if srv_ok:
         srv.start()
@@ -196,8 +226,9 @@ def main(argv: list[str] | None = None) -> int:
                 ev = backend.poll_events()
                 if not ev.empty():
                     log.debug("push event: %s", ev)
-                if policy is not None:
-                    apply_power(policy.tick(time.monotonic()))
+                if policy is not None and policy.tick(time.monotonic()) is False:
+                    backend.set_power(False)
+                    log.info("power: OFF (no demand, grace elapsed)")
                 bridge.publish_state()
     finally:
         if watcher:

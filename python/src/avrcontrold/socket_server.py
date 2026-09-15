@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 class SocketServer(threading.Thread):
     def __init__(self, path: str, backend: Backend, lock: threading.Lock,
                  vol_ceiling: int, *, meta_provider=None, playstate_provider=None,
-                 on_shutdown=None):
+                 demand_handler=None, on_shutdown=None):
         super().__init__(name="avr-socket", daemon=True)
         self.path = path
         self.backend = backend
@@ -29,6 +29,7 @@ class SocketServer(threading.Thread):
         self.vol_ceiling = vol_ceiling
         self.meta_provider = meta_provider
         self.playstate_provider = playstate_provider
+        self.demand_handler = demand_handler
         self.on_shutdown = on_shutdown
         self._stop = threading.Event()
         self._sock: socket.socket | None = None
@@ -105,7 +106,8 @@ class SocketServer(threading.Thread):
                         return
                     with self.lock:
                         reply = dispatch(self.backend, line, self.vol_ceiling,
-                                         self.meta_provider, self.playstate_provider)
+                                         self.meta_provider, self.playstate_provider,
+                                         self.demand_handler)
                     try:
                         conn.sendall((reply + "\n").encode())
                     except OSError:

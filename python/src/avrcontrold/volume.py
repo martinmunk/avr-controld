@@ -41,6 +41,31 @@ def clamp_absolute(requested: int, ceiling: int) -> int:
     return int(requested)
 
 
+# ---- AirPlay volume mapping (phone slider -> receiver) ---------------------
+# shairport reports the sender's AirPlay volume in dB over D-Bus
+# (RemoteControl.AirplayVolume). It ranges roughly [AIRPLAY_MIN_DB, 0]; a special
+# very-negative value means muted. Map that to the 0-100 receiver scale.
+AIRPLAY_MIN_DB = -30.0
+AIRPLAY_MUTE_DB = -144.0
+
+
+def is_airplay_mute(db: float) -> bool:
+    """shairport signals mute as a large negative dB (kMuteDb = -144)."""
+    return db <= -140.0
+
+
+def airplay_db_to_pct(db: float, min_db: float = AIRPLAY_MIN_DB,
+                      max_db: float = 0.0) -> int:
+    """Map an AirPlay dB level to a 0-100 percent (linear over [min_db, max_db])."""
+    if max_db <= min_db:
+        return 0
+    if db <= min_db:
+        return 0
+    if db >= max_db:
+        return 100
+    return round((db - min_db) / (max_db - min_db) * 100)
+
+
 def allow_step_up(current: int | None, ceiling: int) -> bool:
     """Whether a relative volume-up step is allowed given the ceiling.
 

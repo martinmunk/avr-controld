@@ -101,11 +101,13 @@ class ShairportWatcher(threading.Thread):
     """Watches shairport-sync over the system bus. Best-effort: if D-Bus or
     shairport is unavailable, it logs and the daemon runs without it."""
 
-    def __init__(self, *, on_playing=None, on_change=None, lock: threading.Lock | None = None):
+    def __init__(self, *, on_playing=None, on_change=None, on_volume=None,
+                 lock: threading.Lock | None = None):
         super().__init__(name="shairport-dbus", daemon=True)
         self.state = ShairportState()
         self.on_playing = on_playing   # called(bool) when play-state flips
         self.on_change = on_change     # called() on any metadata/state change
+        self.on_volume = on_volume     # called(db: float) when AirplayVolume changes
         self.lock = lock or threading.Lock()
         self._stop = threading.Event()
         self._conn = None
@@ -171,6 +173,8 @@ class ShairportWatcher(threading.Thread):
                     touched = self.state.apply_changed(interface, changed)
                     if "playing" in touched:
                         self._emit_playing()
+                    if "volume" in touched and self.on_volume and self.state.volume_db is not None:
+                        self.on_volume(self.state.volume_db)
                     if touched and self.on_change:
                         self.on_change()
         try:

@@ -72,3 +72,16 @@ def test_bad_and_unknown():
     assert d(be, "SET volume loud") == "ERR bad value"
     assert d(be, "GET bogus") == "ERR bad GET"
     assert d(be, "FLOOP") == "ERR unknown verb"
+
+
+def test_demand_verb():
+    be = FakeBackend()
+    seen = []
+    h = lambda name, active, inp: seen.append((name, active, inp))
+    assert P.dispatch(be, "DEMAND cec 1 Digital 1", 100, demand_handler=h) == "OK"
+    assert seen[-1] == ("cec", True, "Digital 1")
+    assert P.dispatch(be, "DEMAND airplay 0", 100, demand_handler=h) == "OK"
+    assert seen[-1] == ("airplay", False, None)
+    # no handler -> benign
+    assert P.dispatch(be, "DEMAND cec 1", 100) == "OK -"
+    assert P.dispatch(be, "DEMAND", 100, demand_handler=h) == "ERR bad DEMAND"

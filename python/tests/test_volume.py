@@ -54,3 +54,29 @@ def test_allow_step_up_below_ceiling():
 def test_allow_step_up_at_or_above_ceiling():
     assert allow_step_up(40, 40) is False
     assert allow_step_up(55, 40) is False
+
+
+# ---- AirPlay dB mapping ----------------------------------------------------
+from avrcontrold.volume import airplay_db_to_pct, is_airplay_mute, AIRPLAY_MUTE_DB
+
+
+def test_airplay_db_to_pct_endpoints():
+    assert airplay_db_to_pct(0.0) == 100
+    assert airplay_db_to_pct(-30.0) == 0
+    assert airplay_db_to_pct(-15.0) == 50          # midpoint of [-30,0]
+
+
+def test_airplay_db_to_pct_clamps_out_of_range():
+    assert airplay_db_to_pct(5.0) == 100
+    assert airplay_db_to_pct(-100.0) == 0
+
+
+def test_airplay_db_to_pct_custom_range():
+    assert airplay_db_to_pct(-20.0, min_db=-40.0, max_db=0.0) == 50
+
+
+def test_is_airplay_mute():
+    assert is_airplay_mute(AIRPLAY_MUTE_DB)
+    assert is_airplay_mute(-144.0)
+    assert not is_airplay_mute(-30.0)
+    assert not is_airplay_mute(0.0)

@@ -59,7 +59,7 @@ def _opt_str(v: str | None) -> str:
 
 
 def dispatch(backend: Backend, line: str, vol_ceiling: int,
-             meta_provider=None, playstate_provider=None) -> str:
+             meta_provider=None, playstate_provider=None, demand_handler=None) -> str:
     """Handle one protocol line, return the single reply line (no newline).
 
     vol_ceiling is the HARD cap on any absolute volume this daemon will set --
@@ -101,6 +101,21 @@ def dispatch(backend: Backend, line: str, vol_ceiling: int,
         return "OK " + ",".join(backend.get_inputs())
     if verb == "SPEAKERS":
         return "OK "
+
+    if verb == "DEMAND":
+        # DEMAND <name> <0|1> [input...] -- feed the power policy. A client on the
+        # CEC bus (avr-cec-relay) uses this to say "the setup needs the receiver"
+        # (with the input to select) or no longer does. No-op if no policy.
+        if demand_handler is None:
+            return "OK -"
+        if len(parts) < 3:
+            return "ERR bad DEMAND"
+        name = parts[1]
+        active = parts[2] not in ("0", "off", "false")
+        toks = line.split(None, 3)
+        inp = toks[3] if active and len(toks) > 3 else None
+        demand_handler(name, active, inp)
+        return "OK"
 
     if verb == "META":
         return "OK " + (meta_provider() if meta_provider else "-")
