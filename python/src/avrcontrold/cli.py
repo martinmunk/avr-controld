@@ -169,13 +169,24 @@ def main(argv: list[str] | None = None) -> int:
     if truthy(cfg.get("power_policy", "0")):
         policy = PowerPolicy(off_grace_s=float(cfg.get("off_grace", "120")))
 
+    # Track the last-seen active state per demand so we act only on activation
+    # *edges*. This lets a client (e.g. the CEC relay) re-assert its demand
+    # periodically -- so the state survives a daemon restart -- without those
+    # re-assertions re-selecting the input every time (which would spam the
+    # receiver and fight another active source).
+    _demand_active: dict[str, bool] = {}
+
     def feed_demand(name, active, inp=None):
         if policy is None:
             return
         with lock:
+            was = _demand_active.get(name, False)
+            edge_on = active and not was
+            _demand_active[name] = active
             act = policy.set_demand(name, active, time.monotonic())
-            chosen = inp or (airplay_input if name == "airplay" else "")
+            chosen = inp or (airplay_input if name.startswith("airplay") else "")
             if act is True:
+                # Power transitioned on (fresh daemon or was off): power + input.
                 backend.set_power(True)
                 if chosen:
                     backend.set_input(chosen)
@@ -184,8 +195,9 @@ def main(argv: list[str] | None = None) -> int:
             elif act is False:
                 backend.set_power(False)
                 log.info("power: OFF (no demand, grace elapsed)")
-            elif active and chosen and backend.get_power():
-                # Already on; a (re)activated source wants its own input.
+            elif edge_on and chosen and backend.get_power():
+                # Newly-activated source while already on -> switch to its input.
+                # (A periodic re-assertion is active-but-not-an-edge: do nothing.)
                 backend.set_input(chosen)
                 log.info("input -> %s (demand %s active)", chosen, name)
 

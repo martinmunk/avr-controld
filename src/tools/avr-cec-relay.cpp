@@ -274,7 +274,18 @@ int main(int argc, char** argv) {
     while (true) {
         int n = poll(&pfd, 1, tv_poll_ms);
         if (n < 0) { if (errno == EINTR) continue; break; }
-        if (n == 0) { cec_send(fd, my_la, tv_addr, give_power, 1); continue; }  // periodic TV power poll
+        if (n == 0) {
+            cec_send(fd, my_la, tv_addr, give_power, 1);   // periodic TV power poll
+            // Re-assert the demand while the TV is on so the daemon recovers the
+            // state after a restart. The daemon acts on the activation edge only,
+            // so a re-assertion won't re-select the input or fight another source.
+            if (tv_on == 1) {
+                std::string c = "DEMAND cec 1";
+                if (!cec_input.empty()) c += " " + cec_input;
+                avr.cmd(c);
+            }
+            continue;
+        }
         if (!(pfd.revents & POLLIN)) continue;
 
         struct cec_msg msg;
