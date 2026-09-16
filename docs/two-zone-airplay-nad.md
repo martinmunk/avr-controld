@@ -1,9 +1,34 @@
 # Two-zone AirPlay over a NAD T 757 (Living Room + Dining Room)
 
-Status: **Living Room is built and live; Dining Room (Zone 2) AirPlay is a plan.**
-Rewritten 2026-09-16 after confirming a hard T 757 limitation that invalidates
-the earlier "coax → Zone 2" design (see *What changed* at the end). Supersedes
-the stale `MULTI_ZONE_AND_SHARED_CONNECTION.md` at the repo root.
+Status: **BOTH zones built and live on StueTærten (deployed 2026-09-16).**
+Living Room → NAD Main (native shairport); Dining Room → NAD Zone 2 via a
+macvlan shairport **container** + a USB DAC into Source 3 (analog). See
+*As built* below. Rewritten 2026-09-16 after confirming a hard T 757 limitation
+that invalidated the earlier "coax → Zone 2" design (see *What changed* at the
+end). Supersedes the stale `MULTI_ZONE_AND_SHARED_CONNECTION.md` at the repo root.
+
+## As built (StueTærten, live)
+
+- **Living Room → NAD Main**: native `shairport-sync.service` (optical →
+  HiFiBerry Digi → NAD), `org.gnome.ShairportSync` on the **system** bus.
+- **Dining Room → NAD Zone 2**: `mikebrady/shairport-sync:latest` in a **macvlan**
+  container `pi-audio-diningroom` at its own LAN IP (192.168.20.245,
+  "SpiseTærten"), output to the USB PCM2902 (`hw:CARD=CODEC`) → NAD **Source 3**
+  (analog, "AirPlay 2") → Zone 2. `ignore_volume_control=yes`; the NAD owns Zone 2
+  volume. Publishes D-Bus on a **per-zone private bus**
+  (`/run/pi-audio/diningroom/bus`, `pi-audio-dbus-diningroom.service`, ordered
+  `Before=docker.service` to win the bind-mount boot race).
+- **Daemon** (`avr-controld`, `zones=` config): watches both buses. Dining play →
+  Zone 2 power on + Source 3 + volume from the phone slider, **clamped to
+  `zone.diningroom.max_volume` (50 ≈ −40 dB)** as the hardware-safety cap on the
+  full-scale DAC path (verified: phone 0 dB clamps to −40 dB). Raise the cap in
+  `/etc/avr-controld/config.conf` after confirming levels by ear.
+- **Test caveat**: verified end-to-end *except* audio-by-ear. PipeWire/pyatv RAOP
+  test senders send ALAC that shairport 5.5.2's ffmpeg decoder rejects (a
+  classic-AirPlay sender bug, not the setup); a real iPhone (AirPlay 2) decodes
+  fine. **Grouping** the two zones should sync (nqptp is PTP-slave, the phone is
+  master); if it drifts, containerize Main too (both on macvlan → container↔
+  container sync).
 
 ## Goal
 
