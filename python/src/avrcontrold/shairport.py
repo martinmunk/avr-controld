@@ -241,6 +241,29 @@ class ShairportWatcher(threading.Thread):
             self._writer = None      # drop a possibly-broken connection
             return False
 
+    def drop_session(self) -> bool:
+        """Drop the current AirPlay session (org.gnome.ShairportSync.DropSession).
+
+        Used when the receiver's input is switched away from this zone's AirPlay
+        input: the stream is no longer audible, so end the session and let the
+        sender (phone) fall back to its own output.
+        """
+        try:
+            from jeepney import DBusAddress, new_method_call
+            if self._writer is None:
+                from jeepney.io.blocking import open_dbus_connection
+                self._writer = open_dbus_connection(bus=self.bus)
+            addr = DBusAddress(PATH, bus_name=BUS_NAME, interface=IFACE_MAIN)
+            self._writer.send_and_get_reply(new_method_call(addr, "DropSession"),
+                                            timeout=2)
+            log.info("shairport[%s]: dropped AirPlay session (input switched away)",
+                     self.label)
+            return True
+        except Exception as exc:
+            log.debug("shairport[%s]: DropSession failed: %s", self.label, exc)
+            self._writer = None
+            return False
+
     def stop(self) -> None:
         self._stop.set()
         if self._writer is not None:

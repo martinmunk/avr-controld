@@ -60,6 +60,7 @@ class ZoneTarget:
     airplay_min_db: float = -30.0
     # reverse sync (receiver volume -> phone slider), wired by the daemon:
     read_volume: Optional[Callable[[], Optional[int]]] = None   # -> current pct
+    read_source: Optional[Callable[[], Optional[str]]] = None   # -> current source name
     push_phone: Optional[Callable[[float], bool]] = None        # SetAirplayVolume(db)
     # internal: remember whether we drove this zone to mute, so we only unmute
     # what we muted.
@@ -70,6 +71,11 @@ class ZoneTarget:
     # internal: monotonic time until which reverse pushes are suppressed (set on
     # each forward phone->receiver change).
     _suppress_until: float = 0.0
+    # internal: input-stolen tracking. _input_ok_after gives on_playing a moment
+    # for the source select to settle before we check it; _input_dropped avoids
+    # dropping the session more than once per steal.
+    _input_ok_after: float = 0.0
+    _input_dropped: bool = False
 
     def on_playing(self, playing: bool) -> None:
         """shairport play-state flipped: power the zone on/off and select its
@@ -77,6 +83,8 @@ class ZoneTarget:
         self.set_power(bool(playing))
         if playing and self.source and self.set_source is not None:
             self.set_source(self.source)
+            self._input_ok_after = time.monotonic() + 4.0   # let the select settle
+            self._input_dropped = False
         log.info("zone %s: power %s%s", self.name, "ON" if playing else "OFF",
                  f" + source {self.source}" if (playing and self.source) else "")
 
@@ -130,6 +138,37 @@ class ZoneTarget:
         self.push_phone(airplay_pct_to_db(cur, min_db=self.airplay_min_db))
         log.info("zone %s: receiver volume -> %d%% pushed to phone", self.name, cur)
 
+    def check_input_stolen(self, connected: bool, drop_fn: Callable[[], bool],
+                           now: float | None = None) -> None:
+        """If a sender is connected but the receiver's input for this zone has
+        been switched away from the zone's AirPlay input (TV selected, another
+        source picked on the remote), drop the AirPlay session via ``drop_fn`` so
+        the stream isn't left playing silently into a different input.
+
+        Called from the daemon poll loop under the lock.
+        """
+        if self.read_source is None or not self.source:
+            return
+        if now is None:
+            now = time.monotonic()
+        if not connected:
+            self._input_dropped = False
+            self._input_ok_after = now + 4.0     # grace for the next connect
+            return
+        if now < self._input_ok_after:
+            return                                # let a just-set source settle
+        cur = self.read_source()
+        if cur is None:
+            return
+        if cur != self.source:
+            if not self._input_dropped:
+                self._input_dropped = True
+                log.info("zone %s: input is '%s', not '%s' -> dropping AirPlay session",
+                         self.name, cur, self.source)
+                drop_fn()
+        else:
+            self._input_dropped = False
+
 
 def make_zone_target(target: str, backend: Backend, *, name: str, ceiling: int,
                      source: str = "", airplay_min_db: float = -30.0) -> ZoneTarget:
@@ -147,6 +186,7 @@ def make_zone_target(target: str, backend: Backend, *, name: str, ceiling: int,
             set_power=backend.set_power,
             set_source=backend.set_input,
             read_volume=backend.get_volume,
+            read_source=backend.get_input,
             ceiling=ceiling, source=source, airplay_min_db=airplay_min_db,
         )
     return ZoneTarget(
@@ -156,5 +196,6 @@ def make_zone_target(target: str, backend: Backend, *, name: str, ceiling: int,
         set_power=lambda on: backend.set_extra(f"{target}_power", on),
         set_source=lambda src: backend.set_extra(f"{target}_source", src),
         read_volume=lambda: backend.get_extra(f"{target}_volume"),
+        read_source=lambda: backend.get_extra(f"{target}_source"),
         ceiling=ceiling, source=source, airplay_min_db=airplay_min_db,
     )

@@ -146,3 +146,64 @@ def test_reverse_suppresses_echo_of_our_own_set():
     cur[0] = 50                          # receiver now reads what we set
     zt.sync_from_receiver(True)
     assert pushed == []                  # our own change is not echoed back
+
+
+# ---- input-stolen detection (drop AirPlay session on input switch) ---------
+def _src_zone(cur_src_box, dropped, source="AirPlay"):
+    return ZoneTarget(
+        name="z", set_volume=lambda p: True, set_mute=lambda m: True,
+        set_power=lambda o: True, set_source=lambda s: True, ceiling=100,
+        source=source, read_source=lambda: cur_src_box[0],
+    )
+
+
+def _drop_counter(dropped):
+    def d():
+        dropped.append(1); return True
+    return d
+
+
+def test_input_not_dropped_when_disconnected():
+    cur = ["TV"]; dropped = []
+    zt = _src_zone(cur, dropped)
+    zt.check_input_stolen(False, _drop_counter(dropped), now=100.0)
+    assert dropped == []
+
+
+def test_input_not_dropped_when_source_matches():
+    cur = ["AirPlay"]; dropped = []
+    zt = _src_zone(cur, dropped)
+    zt.check_input_stolen(True, _drop_counter(dropped), now=100.0)
+    assert dropped == []
+
+
+def test_input_dropped_once_when_stolen():
+    cur = ["TV"]; dropped = []
+    zt = _src_zone(cur, dropped)
+    zt.check_input_stolen(True, _drop_counter(dropped), now=100.0)
+    assert dropped == [1]
+    zt.check_input_stolen(True, _drop_counter(dropped), now=103.0)   # still TV
+    assert dropped == [1]                                            # not re-dropped
+
+
+def test_input_grace_after_connect():
+    cur = ["TV"]; dropped = []
+    zt = _src_zone(cur, dropped)
+    # simulate a fresh connect: disconnected sets a grace window
+    zt.check_input_stolen(False, _drop_counter(dropped), now=100.0)  # grace -> 104
+    zt.check_input_stolen(True, _drop_counter(dropped), now=102.0)   # within grace
+    assert dropped == []
+    zt.check_input_stolen(True, _drop_counter(dropped), now=105.0)   # grace passed
+    assert dropped == [1]
+
+
+def test_input_recovers_when_source_returns():
+    cur = ["TV"]; dropped = []
+    zt = _src_zone(cur, dropped)
+    zt.check_input_stolen(True, _drop_counter(dropped), now=100.0)
+    assert dropped == [1]
+    cur[0] = "AirPlay"                                   # user switched back
+    zt.check_input_stolen(True, _drop_counter(dropped), now=103.0)
+    cur[0] = "TV"                                        # and away again
+    zt.check_input_stolen(True, _drop_counter(dropped), now=106.0)
+    assert dropped == [1, 1]                             # dropped again after recovery

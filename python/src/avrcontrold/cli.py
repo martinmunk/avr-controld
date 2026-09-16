@@ -329,11 +329,16 @@ def main(argv: list[str] | None = None) -> int:
             # (receiver remote/front panel -> phone slider). One lock per zone.
             now = time.monotonic()
             for zt, w, zpol in zone_ctx:
+                connected = w.state.active or w.state.playing()
                 with lock:
                     if zpol is not None and zpol.tick(now) is False:
                         zt.set_power(False)
                         log.info("zone %s: power OFF (grace elapsed)", zt.name)
-                    zt.sync_from_receiver(w.state.active or w.state.playing(), now)
+                    zt.sync_from_receiver(connected, now)
+                    # If the receiver's input was switched away from this zone's
+                    # AirPlay input, end the session so the phone stops streaming
+                    # into a source that isn't playing.
+                    zt.check_input_stolen(connected, w.drop_session, now)
             # publish_state takes the lock per read internally (released between
             # reads), so this long sweep doesn't block interactive commands.
             bridge.publish_state()
