@@ -231,7 +231,13 @@ def main(argv: list[str] | None = None) -> int:
     # ``watcher`` is the primary (first Main, else first) used for the socket
     # meta/playstate providers; ``watchers`` is stopped as a set on shutdown.
     watchers: list[ShairportWatcher] = []
+    # Per-zone context for the poll loop: (zone_target, watcher, zone_policy).
+    # zone_policy is a PowerPolicy for extra zones (grace before power-off, so a
+    # brief pause/track-gap doesn't power-cycle the zone); None for the main zone
+    # (it uses the shared power policy) and when there's no power policy at all.
+    zone_ctx: list[tuple] = []
     watcher = None
+    zone_off_grace = float(cfg.get("zone_off_grace", "45"))
     zones = parse_zones(cfg)
     if zones:
         for z in zones:
@@ -240,19 +246,39 @@ def main(argv: list[str] | None = None) -> int:
                                   ceiling=zceil, source=z["input"],
                                   airplay_min_db=airplay_min_db)
             w = ShairportWatcher(bus=z["bus"], label=z["name"], lock=lock)
-            # Main zone routes power through the shared policy (so the CEC/TV
-            # demand and AirPlay demand cooperate); extra zones own their power.
+            zt.push_phone = w.set_airplay_volume     # reverse sync target
+            zpol = None
             if z["target"] == "main" and policy is not None:
+                # Main routes power through the shared policy (so the CEC/TV demand
+                # and AirPlay demand cooperate).
                 w.on_playing = (lambda p, zn=z["name"], inp=z["input"]:
                                 feed_demand(f"airplay:{zn}", p, inp))
+            elif policy is not None:
+                # Extra zone: own power, but debounced through its own policy so a
+                # momentary not-playing doesn't flap the zone off.
+                zpol = PowerPolicy(off_grace_s=zone_off_grace)
+
+                def _zpower(active, zt=zt, zpol=zpol):
+                    cmd = zpol.set_demand("play", active, time.monotonic())
+                    if cmd is True:
+                        zt.on_playing(True)          # power on + select source
+                    elif cmd is False:
+                        zt.set_power(False)
+                        log.info("zone %s: power OFF (grace elapsed)", zt.name)
+                w.on_playing = _zpower
             else:
                 w.on_playing = zt.on_playing
             # Volume sync is on by default (phone slider -> receiver zone volume,
-            # clamped to the zone ceiling). volume=off leaves the zone's volume
-            # untouched (endpoint does its own software volume).
-            if truthy(z.get("volume", "on")):
+            # clamped to the zone ceiling; and reverse: receiver remote -> phone).
+            # volume=off leaves the zone's volume untouched (endpoint does its own
+            # software volume) and disables reverse sync for it.
+            vol_on = truthy(z.get("volume", "on"))
+            if vol_on:
                 w.on_volume = (lambda db, zt=zt, w=w: zt.on_volume(db, w.state.playing()))
+            else:
+                zt.read_volume = None            # no reverse sync
             watchers.append(w)
+            zone_ctx.append((zt, w, zpol))
             if watcher is None or z["target"] == "main":
                 watcher = w
         log.info("zones: %s", ", ".join(f"{z['name']}->{z['target']}" for z in zones))
@@ -296,6 +322,14 @@ def main(argv: list[str] | None = None) -> int:
                 if policy is not None and policy.tick(time.monotonic()) is False:
                     backend.set_power(False)
                     log.info("power: OFF (no demand, grace elapsed)")
+                # Per-zone: flush matured power-off grace, then reverse volume
+                # sync (receiver remote/front panel -> phone slider).
+                now = time.monotonic()
+                for zt, w, zpol in zone_ctx:
+                    if zpol is not None and zpol.tick(now) is False:
+                        zt.set_power(False)
+                        log.info("zone %s: power OFF (grace elapsed)", zt.name)
+                    zt.sync_from_receiver(w.state.active or w.state.playing())
                 bridge.publish_state()
     finally:
         for w in watchers:

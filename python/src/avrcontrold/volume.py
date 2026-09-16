@@ -66,6 +66,18 @@ def airplay_db_to_pct(db: float, min_db: float = AIRPLAY_MIN_DB,
     return round((db - min_db) / (max_db - min_db) * 100)
 
 
+def airplay_pct_to_db(pct: int, min_db: float = AIRPLAY_MIN_DB,
+                      max_db: float = 0.0) -> float:
+    """Inverse of :func:`airplay_db_to_pct`: a 0-100 percent back to AirPlay dB.
+
+    Used for reverse volume sync (receiver remote -> phone slider): the receiver's
+    current volume percent is mapped back to the AirPlay dB scale and written to
+    shairport via ``SetAirplayVolume`` so the phone reflects the real level.
+    """
+    p = max(0, min(100, pct))
+    return min_db + (p / 100.0) * (max_db - min_db)
+
+
 def allow_step_up(current: int | None, ceiling: int) -> bool:
     """Whether a relative volume-up step is allowed given the ceiling.
 

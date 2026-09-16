@@ -18,12 +18,19 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
 
 from .backends.base import Backend
-from .volume import airplay_db_to_pct, clamp_absolute, is_airplay_mute
+from .volume import (airplay_db_to_pct, airplay_pct_to_db, clamp_absolute,
+                     is_airplay_mute)
 
 log = logging.getLogger(__name__)
+
+# Reverse-sync deadband: ignore receiver-volume differences this small (percent).
+# The forward path sets an integer-dB receiver volume, so a percent readback can
+# differ from what we asked by ~1 through rounding; only a real remote change
+# (bigger step) should be pushed back to the phone.
+_REVERSE_DEADBAND_PCT = 2
 
 
 @dataclass
@@ -45,9 +52,15 @@ class ZoneTarget:
     ceiling: int
     source: str = ""
     airplay_min_db: float = -30.0
+    # reverse sync (receiver volume -> phone slider), wired by the daemon:
+    read_volume: Optional[Callable[[], Optional[int]]] = None   # -> current pct
+    push_phone: Optional[Callable[[float], bool]] = None        # SetAirplayVolume(db)
     # internal: remember whether we drove this zone to mute, so we only unmute
     # what we muted.
     _muted: bool = False
+    # internal: last receiver volume percent we have accounted for, so a change
+    # we caused (phone -> receiver) is not echoed back to the phone.
+    _observed_pct: Optional[int] = None
 
     def on_playing(self, playing: bool) -> None:
         """shairport play-state flipped: power the zone on/off and select its
@@ -76,6 +89,31 @@ class ZoneTarget:
         pct = clamp_absolute(
             airplay_db_to_pct(db, min_db=self.airplay_min_db), self.ceiling)
         self.set_volume(pct)
+        # We just drove the receiver to this level; record it so reverse sync
+        # doesn't echo our own change back to the phone.
+        self._observed_pct = pct
+
+    def sync_from_receiver(self, connected: bool) -> None:
+        """Reverse sync: if the receiver's volume changed on its own (IR remote,
+        front panel), push the new level to the phone slider via SetAirplayVolume.
+
+        Only acts while a sender is connected (there is a slider to move) and
+        skips changes this zone caused itself (deadband around the last value we
+        set). Called from the daemon poll loop under the lock.
+        """
+        if not connected or self.read_volume is None or self.push_phone is None:
+            return
+        cur = self.read_volume()
+        if cur is None:
+            return
+        if self._observed_pct is None:
+            self._observed_pct = cur          # first read: baseline, don't push
+            return
+        if abs(cur - self._observed_pct) <= _REVERSE_DEADBAND_PCT:
+            return                            # unchanged / our own rounding
+        self._observed_pct = cur
+        self.push_phone(airplay_pct_to_db(cur, min_db=self.airplay_min_db))
+        log.info("zone %s: receiver volume -> %d%% pushed to phone", self.name, cur)
 
 
 def make_zone_target(target: str, backend: Backend, *, name: str, ceiling: int,
@@ -93,6 +131,7 @@ def make_zone_target(target: str, backend: Backend, *, name: str, ceiling: int,
             set_mute=backend.set_mute,
             set_power=backend.set_power,
             set_source=backend.set_input,
+            read_volume=backend.get_volume,
             ceiling=ceiling, source=source, airplay_min_db=airplay_min_db,
         )
     return ZoneTarget(
@@ -101,5 +140,6 @@ def make_zone_target(target: str, backend: Backend, *, name: str, ceiling: int,
         set_mute=lambda m: backend.set_extra(f"{target}_mute", m),
         set_power=lambda on: backend.set_extra(f"{target}_power", on),
         set_source=lambda src: backend.set_extra(f"{target}_source", src),
+        read_volume=lambda: backend.get_extra(f"{target}_volume"),
         ceiling=ceiling, source=source, airplay_min_db=airplay_min_db,
     )

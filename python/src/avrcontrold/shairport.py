@@ -118,6 +118,7 @@ class ShairportWatcher(threading.Thread):
         self.label = label or bus
         self._stop = threading.Event()
         self._conn = None
+        self._writer = None            # lazy, separate connection for writes
 
     # ---- I/O (jeepney) --------------------------------------------------
     def _read_initial(self, conn):
@@ -196,8 +197,39 @@ class ShairportWatcher(threading.Thread):
         if self.on_playing:
             self.on_playing(self.state.playing())
 
+    # ---- write path (reverse volume sync: receiver -> phone slider) ------
+    def set_airplay_volume(self, db: float) -> bool:
+        """Push a volume to the sender via RemoteControl.SetAirplayVolume(d).
+
+        Uses a separate connection from the recv loop (jeepney blocking
+        connections are not safe for concurrent send/recv). Best-effort: if
+        shairport isn't there or the bus is down, it logs and returns False.
+        Only the poll-loop thread calls this, so the writer connection is used
+        single-threaded.
+        """
+        try:
+            from jeepney import DBusAddress, new_method_call
+            if self._writer is None:
+                from jeepney.io.blocking import open_dbus_connection
+                self._writer = open_dbus_connection(bus=self.bus)
+            addr = DBusAddress(PATH, bus_name=BUS_NAME, interface=IFACE_REMOTE)
+            msg = new_method_call(addr, "SetAirplayVolume", "d", (float(db),))
+            self._writer.send_and_get_reply(msg, timeout=2)
+            return True
+        except Exception as exc:
+            log.debug("shairport[%s]: SetAirplayVolume(%.1f) failed: %s",
+                      self.label, db, exc)
+            self._writer = None      # drop a possibly-broken connection
+            return False
+
     def stop(self) -> None:
         self._stop.set()
+        if self._writer is not None:
+            try:
+                self._writer.close()
+            except Exception:
+                pass
+            self._writer = None
 
     # ---- providers for the socket protocol ------------------------------
     def snapshot(self) -> str:
