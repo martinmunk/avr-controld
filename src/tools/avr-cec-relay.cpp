@@ -272,9 +272,13 @@ int main(int argc, char** argv) {
     LOGI("relay running");
 
     while (true) {
-        int n = poll(&pfd, 1, tv_poll_ms);
+        // Only poll the TV's power while we believe it is ON (to catch an off we
+        // might miss). When it's off/unknown, stay SILENT and wait for the TV's
+        // own wake broadcast -- never ping a sleeping TV (which some CEC TVs
+        // treat as a reason to wake).
+        int n = poll(&pfd, 1, tv_on == 1 ? tv_poll_ms : -1);
         if (n < 0) { if (errno == EINTR) continue; break; }
-        if (n == 0) { cec_send(fd, my_la, tv_addr, give_power, 1); continue; }  // periodic TV power poll
+        if (n == 0) { cec_send(fd, my_la, tv_addr, give_power, 1); continue; }  // periodic poll (TV on)
         if (!(pfd.revents & POLLIN)) continue;
 
         struct cec_msg msg;
@@ -311,7 +315,10 @@ int main(int argc, char** argv) {
             report_audio_status(initiator);
             break;
         case CEC_MSG_GIVE_SYSTEM_AUDIO_MODE_STATUS: {
-            const __u8 p[] = {CEC_MSG_SYSTEM_AUDIO_MODE_STATUS, CEC_OP_SYS_AUD_STATUS_ON};
+            // Reflect the TV's state: don't keep claiming the audio system is
+            // active while the TV is off (which can prompt a re-wake).
+            __u8 st = (tv_on == 0) ? 0 : CEC_OP_SYS_AUD_STATUS_ON;
+            const __u8 p[] = {CEC_MSG_SYSTEM_AUDIO_MODE_STATUS, st};
             cec_send(fd, my_la, initiator, p, 2);
             break;
         }
@@ -322,6 +329,14 @@ int main(int argc, char** argv) {
         case CEC_MSG_REPORT_ARC_INITIATED:
             LOGI("ARC initiated by TV");
             break;
+        case CEC_MSG_REQUEST_ARC_TERMINATION: {
+            // The TV asks to tear ARC down (typically at power-off). Acknowledge
+            // it -- ignoring it can leave the TV re-negotiating the audio link.
+            const __u8 term[] = {CEC_MSG_REPORT_ARC_TERMINATED};
+            cec_send(fd, my_la, initiator, term, 1);
+            LOGI("ARC termination requested -> Report ARC Terminated");
+            break;
+        }
 
         // ---- TV/setup power tracking -> receiver power demand ----------
         case CEC_MSG_REPORT_POWER_STATUS:
