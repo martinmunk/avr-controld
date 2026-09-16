@@ -1,3 +1,14 @@
+martinmunk-avr-controld (0.4.1) stable; urgency=medium
+
+  * feed_demand: when a source demand clears while the receiver stays on for
+    another demand, restore that demand's input (e.g. stop AirPlay to Main while
+    the TV is on -> switch Main back to the TV input).
+  * Packaging: start/restart the service on install and upgrade (was left stopped
+    after apt upgrade). The unit is gated on ConditionPathExists=the config, so a
+    fresh install without config does not crash-loop.
+
+ -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Wed, 16 Sep 2026 13:10:00 +0000
+
 martinmunk-avr-controld (0.4.0) stable; urgency=medium
 
   * First release of the Python avr-controld: a broker daemon that owns each AV

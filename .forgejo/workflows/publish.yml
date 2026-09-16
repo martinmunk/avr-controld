@@ -91,9 +91,15 @@ jobs:
           echo "Distribution: ${{ matrix.codename }}"
           echo "Component:    main"
           echo "Architecture: ${{ matrix.arch }}"
-          curl -f -H "Authorization: token $FORGEJO_TOKEN" \
+          code=$(curl -s -o /tmp/upload.out -w '%{http_code}' -H "Authorization: token $FORGEJO_TOKEN" \
             --upload-file "$PACKAGE_FILE" \
-            "$FORGEJO_URL/api/packages/${{ github.repository_owner }}/debian/pool/${{ matrix.codename }}/main/upload"
+            "$FORGEJO_URL/api/packages/${{ github.repository_owner }}/debian/pool/${{ matrix.codename }}/main/upload")
+          echo "HTTP $code"; cat /tmp/upload.out 2>/dev/null || true; echo
+          case "$code" in
+            201|202) echo "published" ;;
+            409) echo "this version already exists in the registry - skipping (idempotent)" ;;
+            *) echo "upload failed (HTTP $code)"; exit 1 ;;
+          esac
           echo ""
           echo "Successfully published $(basename "$PACKAGE_FILE")"
 
@@ -138,7 +144,13 @@ jobs:
           set -eu
           PACKAGE_FILE=$(ls martinmunk-avr-controld_*_all.deb | head -1)
           echo "Publishing $PACKAGE_FILE to debian/trixie/main"
-          curl -f -H "Authorization: token $FORGEJO_TOKEN" \
+          code=$(curl -s -o /tmp/upload.out -w '%{http_code}' -H "Authorization: token $FORGEJO_TOKEN" \
             --upload-file "$PACKAGE_FILE" \
-            "$FORGEJO_URL/api/packages/${{ github.repository_owner }}/debian/pool/trixie/main/upload"
+            "$FORGEJO_URL/api/packages/${{ github.repository_owner }}/debian/pool/trixie/main/upload")
+          echo "HTTP $code"; cat /tmp/upload.out 2>/dev/null || true; echo
+          case "$code" in
+            201|202) echo "published" ;;
+            409) echo "this version already exists in the registry - skipping (idempotent)" ;;
+            *) echo "upload failed (HTTP $code)"; exit 1 ;;
+          esac
           echo "Published $(basename "$PACKAGE_FILE")"

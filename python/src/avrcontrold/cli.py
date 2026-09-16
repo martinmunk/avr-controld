@@ -175,6 +175,11 @@ def main(argv: list[str] | None = None) -> int:
     # re-assertions re-selecting the input every time (which would spam the
     # receiver and fight another active source).
     _demand_active: dict[str, bool] = {}
+    _demand_input: dict[str, str] = {}
+    # When several demands want different inputs, this order decides which one to
+    # fall back to when a source stops but the receiver stays on (e.g. AirPlay
+    # stops while the TV is still on -> go back to the TV input). Earlier = wins.
+    _demand_priority = ["cec"]
 
     def feed_demand(name, active, inp=None):
         if policy is None:
@@ -182,9 +187,12 @@ def main(argv: list[str] | None = None) -> int:
         with lock:
             was = _demand_active.get(name, False)
             edge_on = active and not was
+            edge_off = was and not active
             _demand_active[name] = active
             act = policy.set_demand(name, active, time.monotonic())
             chosen = inp or (airplay_input if name.startswith("airplay") else "")
+            if active and chosen:
+                _demand_input[name] = chosen
             if act is True:
                 # Power transitioned on (fresh daemon or was off): power + input.
                 backend.set_power(True)
@@ -200,6 +208,19 @@ def main(argv: list[str] | None = None) -> int:
                 # (A periodic re-assertion is active-but-not-an-edge: do nothing.)
                 backend.set_input(chosen)
                 log.info("input -> %s (demand %s active)", chosen, name)
+            elif edge_off and backend.get_power():
+                # A source stopped but the receiver stays on (another demand still
+                # holds it, e.g. the TV). Restore the input of a remaining demand
+                # so we don't sit on the now-silent input (AirPlay -> back to TV).
+                remaining = [n for n, a in _demand_active.items()
+                             if a and n != name and _demand_input.get(n)]
+                remaining.sort(key=lambda n: _demand_priority.index(n)
+                               if n in _demand_priority else len(_demand_priority))
+                if remaining:
+                    tgt = _demand_input[remaining[0]]
+                    backend.set_input(tgt)
+                    log.info("input -> %s (demand %s cleared, %s still active)",
+                             tgt, name, remaining[0])
 
     # ---- optional AirPlay volume sync (phone slider -> receiver) ---------
     airplay_min_db = float(cfg.get("airplay_min_db", "-30"))

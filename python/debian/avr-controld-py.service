@@ -4,6 +4,8 @@ Documentation=https://forgejo.servers.vejen.loc.martinmunk.com/martinmunk/alsa-a
 After=network-online.target
 Wants=network-online.target
 
+ConditionPathExists=/etc/avr-controld/config.conf
+
 [Service]
 Type=simple
 ExecStart=/opt/avr-controld/venv/bin/avr-controld --config /etc/avr-controld/config.conf

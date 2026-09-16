@@ -35,7 +35,7 @@ override_dh_auto_install:
 # Register the unit (daemon-reload) but do NOT enable/start: it needs an admin
 # to create /etc/avr-controld/config.conf first.
 override_dh_installsystemd:
-	dh_installsystemd --no-enable --no-start --name=avr-controld-py
+	dh_installsystemd --name=avr-controld-py
 
 override_dh_auto_clean:
 	rm -rf $(VENV) build *.egg-info src/*.egg-info
