@@ -26,7 +26,6 @@ from .backends.base import Backend
 from .backends.demo import DemoBackend
 from .mqtt.bridge import MqttBridge
 from .mqtt.entities import Device, sanitize
-from .mqtt.paho_client import PahoTransport
 from .power_policy import PowerPolicy
 from .protocol import avr_socket_path
 from .shairport import ShairportWatcher
@@ -145,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     ceiling = int(cfg.get("max_volume", "100"))
     poll_interval = float(cfg.get("poll_interval", "5"))
 
+    from .mqtt.paho_client import PahoTransport   # lazy: paho only needed at runtime
     transport = PahoTransport(
         host=cfg.get("mqtt_host", "localhost"),
         port=int(cfg.get("mqtt_port", "1883")),
