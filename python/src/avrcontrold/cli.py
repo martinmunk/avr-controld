@@ -31,7 +31,8 @@ from .power_policy import PowerPolicy
 from .protocol import avr_socket_path
 from .shairport import ShairportWatcher
 from .socket_server import SocketServer
-from .volume import airplay_db_to_pct, clamp_absolute, is_airplay_mute
+from .volume import airplay_db_to_pct, clamp_absolute, clamp_ceiling, is_airplay_mute
+from .zones import make_zone_target
 
 # Map a config backend name to the canonical socket "type" the C ALSA plugins
 # and avr-cec-relay use, so the derived socket path matches theirs.
@@ -89,6 +90,34 @@ def build_backend(cfg: dict) -> Backend:
 def default_node_id(cfg: dict) -> str:
     ident = cfg.get("device") or f"{cfg.get('mqtt_host','')}"
     return sanitize(f"{cfg.get('backend','nad')}_{ident}")
+
+
+def parse_zones(cfg: dict) -> list[dict]:
+    """Parse multi-zone AirPlay watchers from config, for the Docker per-container
+    D-Bus setup. Returns [] when no ``zones`` key is set (use the single-watcher
+    path instead). Config shape::
+
+        zones = livingroom,diningroom
+        zone.livingroom.bus        = unix:path=/run/pi-audio/livingroom/bus
+        zone.livingroom.target     = main
+        zone.livingroom.input      = AirPlay
+        zone.diningroom.bus        = unix:path=/run/pi-audio/diningroom/bus
+        zone.diningroom.target     = zone2
+        zone.diningroom.input      = AirPlay 2
+        zone.diningroom.max_volume = 60      # optional per-zone ceiling
+    """
+    names = [z.strip() for z in cfg.get("zones", "").split(",") if z.strip()]
+    zones: list[dict] = []
+    for name in names:
+        p = f"zone.{name}."
+        zones.append({
+            "name": name,
+            "bus": cfg.get(p + "bus", "SYSTEM"),
+            "target": cfg.get(p + "target", "main").lower(),
+            "input": cfg.get(p + "input", ""),
+            "max_volume": cfg.get(p + "max_volume", ""),  # "" => inherit global
+        })
+    return zones
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -189,15 +218,45 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
 
-    # ---- optional shairport-sync watcher (play-state -> power demand) ----
+    # ---- shairport-sync watcher(s) (play-state -> power, slider -> volume) --
+    # Two shapes:
+    #  * multi-zone (Docker): ``zones=...`` -> one watcher per zone, each on its
+    #    own bus, routed to a receiver zone (Main core, or Zone 2 extras).
+    #  * single (legacy StueTærten): ``shairport=1`` -> one Main watcher on the
+    #    system bus, driving the power policy + Main volume as before.
+    # ``watcher`` is the primary (first Main, else first) used for the socket
+    # meta/playstate providers; ``watchers`` is stopped as a set on shutdown.
+    watchers: list[ShairportWatcher] = []
     watcher = None
-    if truthy(cfg.get("shairport", "0")):
+    zones = parse_zones(cfg)
+    if zones:
+        for z in zones:
+            zceil = clamp_ceiling(int(z["max_volume"])) if z["max_volume"] else ceiling
+            zt = make_zone_target(z["target"], backend, name=z["name"],
+                                  ceiling=zceil, source=z["input"],
+                                  airplay_min_db=airplay_min_db)
+            w = ShairportWatcher(bus=z["bus"], label=z["name"], lock=lock)
+            # Main zone routes power through the shared policy (so the CEC/TV
+            # demand and AirPlay demand cooperate); extra zones own their power.
+            if z["target"] == "main" and policy is not None:
+                w.on_playing = (lambda p, zn=z["name"], inp=z["input"]:
+                                feed_demand(f"airplay:{zn}", p, inp))
+            else:
+                w.on_playing = zt.on_playing
+            w.on_volume = (lambda db, zt=zt, w=w: zt.on_volume(db, w.state.playing()))
+            watchers.append(w)
+            if watcher is None or z["target"] == "main":
+                watcher = w
+        log.info("zones: %s", ", ".join(f"{z['name']}->{z['target']}" for z in zones))
+    elif truthy(cfg.get("shairport", "0")):
         watcher = ShairportWatcher(
             on_playing=lambda p: feed_demand("airplay", p),
             on_volume=on_airplay_volume,
             lock=lock,
         )
-        watcher.start()
+        watchers.append(watcher)
+    for w in watchers:
+        w.start()
 
     # ---- Unix-socket server (plugins + avr-cec-relay bind here) ----------
     kind = cfg.get("backend", "nad").lower()
@@ -231,8 +290,8 @@ def main(argv: list[str] | None = None) -> int:
                     log.info("power: OFF (no demand, grace elapsed)")
                 bridge.publish_state()
     finally:
-        if watcher:
-            watcher.stop()
+        for w in watchers:
+            w.stop()
         if srv_ok:
             srv.stop()
         with lock:

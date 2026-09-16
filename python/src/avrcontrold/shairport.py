@@ -102,13 +102,20 @@ class ShairportWatcher(threading.Thread):
     shairport is unavailable, it logs and the daemon runs without it."""
 
     def __init__(self, *, on_playing=None, on_change=None, on_volume=None,
-                 lock: threading.Lock | None = None):
-        super().__init__(name="shairport-dbus", daemon=True)
+                 lock: threading.Lock | None = None,
+                 bus: str = "SYSTEM", label: str | None = None):
+        super().__init__(name=f"shairport-dbus[{label or bus}]", daemon=True)
         self.state = ShairportState()
         self.on_playing = on_playing   # called(bool) when play-state flips
         self.on_change = on_change     # called() on any metadata/state change
         self.on_volume = on_volume     # called(db: float) when AirplayVolume changes
         self.lock = lock or threading.Lock()
+        # Bus to connect to: "SYSTEM"/"SESSION", or a literal D-Bus address such
+        # as "unix:path=/run/pi-audio/livingroom/bus". A per-zone private bus lets
+        # several shairport instances (each in its own Docker container) coexist
+        # despite the fixed well-known name org.gnome.ShairportSync.
+        self.bus = bus
+        self.label = label or bus
         self._stop = threading.Event()
         self._conn = None
 
@@ -142,9 +149,10 @@ class ShairportWatcher(threading.Thread):
             log.warning("shairport: jeepney unavailable: %s", exc)
             return
         try:
-            conn = open_dbus_connection(bus="SYSTEM")
+            conn = open_dbus_connection(bus=self.bus)
         except Exception as exc:
-            log.warning("shairport: cannot open system bus: %s", exc)
+            log.warning("shairport[%s]: cannot open bus %s: %s",
+                        self.label, self.bus, exc)
             return
         self._conn = conn
         rule = MatchRule(type="signal", interface="org.freedesktop.DBus.Properties",
@@ -156,7 +164,8 @@ class ShairportWatcher(threading.Thread):
         with self.lock:
             self._read_initial(conn)
             self._emit_playing(initial=True)
-        log.info("shairport: watching %s (playing=%s)", BUS_NAME, self.state.playing())
+        log.info("shairport[%s]: watching %s on %s (playing=%s)", self.label,
+                 BUS_NAME, self.bus, self.state.playing())
         with conn.filter(rule) as q:
             while not self._stop.is_set():
                 try:

@@ -95,19 +95,41 @@ analog dongle), with independent per-room sliders.
 
 ## Volume / power integration for Zone 2 (make it as automatic as Main)
 
-The daemon already powers Main and syncs its volume from shairport #1's D-Bus.
-For Zone 2 the same idea applies to shairport #2, with one wrinkle:
+**This is implemented.** The daemon now watches one shairport instance *per zone*
+and routes each to a receiver zone (`avrcontrold.zones.ZoneTarget`):
 
-- **D-Bus name collision**: shairport's D-Bus service name is fixed
-  (`org.gnome.ShairportSync`), so two instances can't both own it on the same bus.
-  Options: run instance #2 on its **own private D-Bus** and point a second daemon
-  watcher at it via the existing **`AVR_DBUS_ADDRESS`** hook (map its
-  `AirplayVolume` → `Zone2.Volume`), **or** consume instance #2's **MQTT** (built
-  into shairport) and drive Zone 2 from the daemon / an HA automation.
-- **Power demand**: shairport #2 playing → a "dining" demand → power Zone 2 on +
-  select the Dining Room source (mirrors the Main power policy).
-- **Safety**: apply a **Zone 2 volume ceiling** on the automated path too, exactly
-  like Main's `max_volume` (Zone 2 at 0 dB is very loud).
+- **D-Bus name collision solved by separate buses**: shairport's D-Bus service
+  name is fixed (`org.gnome.ShairportSync`), so two instances can't own it on one
+  bus. Each container therefore gets its **own private D-Bus** (host path
+  `/run/pi-audio/<zone>/bus`, unit `martinmunk-pi-audio-dbus@<zone>`), and the
+  daemon connects a separate watcher to each. Config (see
+  `avrcontrold.cli.parse_zones`):
+
+  ```ini
+  zones = livingroom,diningroom
+  zone.livingroom.bus        = unix:path=/run/pi-audio/livingroom/bus
+  zone.livingroom.target     = main
+  zone.livingroom.input      = AirPlay
+  zone.diningroom.bus        = unix:path=/run/pi-audio/diningroom/bus
+  zone.diningroom.target     = zone2
+  zone.diningroom.input      = AirPlay 2
+  zone.diningroom.max_volume = 60         # per-zone safety ceiling
+  ```
+
+  `target = main` maps the phone slider to `Main.Volume` and routes power through
+  the shared power policy (so the CEC/TV demand and AirPlay cooperate). Any other
+  `target` (e.g. `zone2`) maps to that zone's extras (`zone2_volume` /
+  `zone2_mute` / `zone2_power` / `zone2_source`) and owns its own power.
+- **Power demand**: shairport (dining) playing → power Zone 2 on + select the
+  configured Zone 2 source; stop → Zone 2 off.
+- **Safety**: each zone has its **own volume ceiling** (`zone.<n>.max_volume`,
+  falling back to the global `max_volume`); every absolute set goes through the
+  same `clamp_absolute` as Main. Zone 2 at 0 dB is very loud — set the ceiling.
+
+The container side ships as the **`martinmunk-pi-audio-docker`** Debian package
+(sibling of the docker-free `martinmunk-pi-audio`): a macvlan compose file with
+one stock `mikebrady/shairport-sync` container per zone (each its own LAN IP),
+the per-zone private-bus units, and example per-zone shairport confs.
 
 ## D-Bus volume facts (still the enabler, now per analog instance)
 
