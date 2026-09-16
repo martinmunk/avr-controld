@@ -136,7 +136,7 @@ def build_extra_entities(device: Device, specs) -> list[Entity]:
             if s.max is not None:
                 cfg["max"] = s.max
             cfg["step"] = s.step or 1
-            cfg["mode"] = "box"
+            cfg["mode"] = s.mode
             if s.unit:
                 cfg["unit_of_measurement"] = s.unit
         elif s.component == "select":

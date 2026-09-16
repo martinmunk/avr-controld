@@ -217,3 +217,15 @@ def test_zone2_source_select_extra():
     assert be.set_extra("zone2_source", "AirPlay")       # name -> number 2
     assert rx.vars["Zone2.Source"] == "2"
     assert be.get_extra("zone2_source") == "AirPlay"
+
+
+def test_zone2_volume_is_percent_like_main():
+    rx = FakeNad()                       # Zone2.Volume default "-20"
+    be = NADBackend("/dev/ttyUSB0", receiver=rx, sources=["Source 1"])
+    specs = {e.key: e for e in be.extras()}
+    z = specs["zone2_volume"]
+    assert z.component == "number" and z.min == 0 and z.max == 100 and z.mode == "slider"
+    assert be.get_extra("zone2_volume") == 75          # -20 dB over -80..0 -> 75%
+    assert be.set_extra("zone2_volume", 50)            # 50% -> -40 dB
+    assert rx.vars["Zone2.Volume"] == "-40"
+    assert be.get_extra("zone2_volume") == 50

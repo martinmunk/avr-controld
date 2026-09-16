@@ -42,6 +42,7 @@ class ExtraSpec:
     step: float | None = None
     unit: str | None = None
     options: list[str] | None = None   # select
+    mode: str = "box"                  # number display: "box" | "slider" | "auto"
     icon: str | None = None
 
 

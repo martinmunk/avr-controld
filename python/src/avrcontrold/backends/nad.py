@@ -27,8 +27,8 @@ _NAD_EXTRAS = [
     ExtraSpec("treble", "number", "Treble", writable=True, min=-10, max=10, step=1,
               unit="dB", icon="mdi:music-note"),
     ExtraSpec("zone2_power", "switch", "Zone 2 Power", writable=True, icon="mdi:power"),
-    ExtraSpec("zone2_volume", "number", "Zone 2 Volume", writable=True, min=-90, max=0,
-              step=1, unit="dB", icon="mdi:volume-high"),
+    ExtraSpec("zone2_volume", "number", "Zone 2 Volume", writable=True, min=0, max=100,
+              step=1, mode="slider", icon="mdi:volume-high"),
     ExtraSpec("zone2_mute", "switch", "Zone 2 Mute", writable=True, icon="mdi:volume-off"),
     ExtraSpec("sleep", "number", "Sleep Timer", writable=True, min=0, max=90, step=15,
               unit="min", icon="mdi:timer"),
@@ -40,7 +40,7 @@ _NAD_EXTRAS = [
 # key -> (NAD variable, type)
 _NAD_EXTRA_VAR = {
     "bass": ("Main.Bass", "int"), "treble": ("Main.Treble", "int"),
-    "zone2_power": ("Zone2.Power", "bool"), "zone2_volume": ("Zone2.Volume", "int"),
+    "zone2_power": ("Zone2.Power", "bool"),
     "zone2_mute": ("Zone2.Mute", "bool"), "sleep": ("Main.Sleep", "int"),
     "listening_mode": ("Main.ListeningMode", "str"), "dimmer": ("Main.Dimmer", "str"),
     "model": ("Main.Model", "str"), "version": ("Main.Version", "str"),
@@ -250,6 +250,14 @@ class NADBackend(Backend):
         return ex
 
     def get_extra(self, key: str):
+        if key == "zone2_volume":
+            v = self._q("Zone2.Volume")
+            if v is None:
+                return None
+            try:
+                return self._db_to_pct(float(v))    # same 0-100 mapping as Main
+            except ValueError:
+                return None
         if key == "zone2_source":
             v = self._q("Zone2.Source")
             if v is None:
@@ -275,6 +283,9 @@ class NADBackend(Backend):
         return v
 
     def set_extra(self, key: str, value) -> bool:
+        if key == "zone2_volume":
+            db = self._pct_to_db(int(value))
+            return self._s("Zone2.Volume", f"{db:.0f}")
         if key == "zone2_source":
             num = self._name_to_num.get(str(value))
             return self._s("Zone2.Source", str(num) if num is not None else str(value))
