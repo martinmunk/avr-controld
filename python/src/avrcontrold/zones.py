@@ -22,21 +22,9 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from .backends.base import Backend
-from .volume import (airplay_db_to_pct, airplay_pct_to_db, clamp_absolute,
-                     is_airplay_mute)
+from .volume import airplay_db_to_pct, clamp_absolute, is_airplay_mute
 
 log = logging.getLogger(__name__)
-
-# Reverse-sync deadband: ignore receiver-volume differences this small (percent).
-# The forward path sets an integer-dB receiver volume, so a percent readback can
-# differ from what we asked by ~1 through rounding; only a real remote change
-# (bigger step) should be pushed back to the phone.
-_REVERSE_DEADBAND_PCT = 2
-
-# After a phone->receiver volume change, hold off reverse pushes this long so an
-# active slider drag isn't fought by us pushing the receiver's (lagging) readback
-# back to the phone.
-_REVERSE_SUPPRESS_S = 3.0
 
 
 @dataclass
@@ -58,19 +46,11 @@ class ZoneTarget:
     ceiling: int
     source: str = ""
     airplay_min_db: float = -30.0
-    # reverse sync (receiver volume -> phone slider), wired by the daemon:
-    read_volume: Optional[Callable[[], Optional[int]]] = None   # -> current pct
-    read_source: Optional[Callable[[], Optional[str]]] = None   # -> current source name
-    push_phone: Optional[Callable[[float], bool]] = None        # SetAirplayVolume(db)
+    # current receiver source name, for input-stolen detection (below).
+    read_source: Optional[Callable[[], Optional[str]]] = None
     # internal: remember whether we drove this zone to mute, so we only unmute
     # what we muted.
     _muted: bool = False
-    # internal: last receiver volume percent we have accounted for, so a change
-    # we caused (phone -> receiver) is not echoed back to the phone.
-    _observed_pct: Optional[int] = None
-    # internal: monotonic time until which reverse pushes are suppressed (set on
-    # each forward phone->receiver change).
-    _suppress_until: float = 0.0
     # internal: input-stolen tracking. _input_ok_after gives on_playing a moment
     # for the source select to settle before we check it; _input_dropped avoids
     # dropping the session more than once per steal.
@@ -106,37 +86,6 @@ class ZoneTarget:
         pct = clamp_absolute(
             airplay_db_to_pct(db, min_db=self.airplay_min_db), self.ceiling)
         self.set_volume(pct)
-        # We just drove the receiver to this level; record it so reverse sync
-        # doesn't echo our own change back to the phone, and hold reverse off
-        # briefly so an active drag isn't fought.
-        self._observed_pct = pct
-        self._suppress_until = time.monotonic() + _REVERSE_SUPPRESS_S
-
-    def sync_from_receiver(self, connected: bool, now: float | None = None) -> None:
-        """Reverse sync: if the receiver's volume changed on its own (IR remote,
-        front panel), push the new level to the phone slider via SetAirplayVolume.
-
-        Only acts while a sender is connected (there is a slider to move) and
-        skips changes this zone caused itself (deadband around the last value we
-        set). Called from the daemon poll loop under the lock.
-        """
-        if not connected or self.read_volume is None or self.push_phone is None:
-            return
-        if now is None:
-            now = time.monotonic()
-        if now < self._suppress_until:
-            return                            # just drove it from the phone
-        cur = self.read_volume()
-        if cur is None:
-            return
-        if self._observed_pct is None:
-            self._observed_pct = cur          # first read: baseline, don't push
-            return
-        if abs(cur - self._observed_pct) <= _REVERSE_DEADBAND_PCT:
-            return                            # unchanged / our own rounding
-        self._observed_pct = cur
-        self.push_phone(airplay_pct_to_db(cur, min_db=self.airplay_min_db))
-        log.info("zone %s: receiver volume -> %d%% pushed to phone", self.name, cur)
 
     def check_input_stolen(self, connected: bool, drop_fn: Callable[[], bool],
                            now: float | None = None) -> None:
@@ -185,7 +134,6 @@ def make_zone_target(target: str, backend: Backend, *, name: str, ceiling: int,
             set_mute=backend.set_mute,
             set_power=backend.set_power,
             set_source=backend.set_input,
-            read_volume=backend.get_volume,
             read_source=backend.get_input,
             ceiling=ceiling, source=source, airplay_min_db=airplay_min_db,
         )
@@ -195,7 +143,6 @@ def make_zone_target(target: str, backend: Backend, *, name: str, ceiling: int,
         set_mute=lambda m: backend.set_extra(f"{target}_mute", m),
         set_power=lambda on: backend.set_extra(f"{target}_power", on),
         set_source=lambda src: backend.set_extra(f"{target}_source", src),
-        read_volume=lambda: backend.get_extra(f"{target}_volume"),
         read_source=lambda: backend.get_extra(f"{target}_source"),
         ceiling=ceiling, source=source, airplay_min_db=airplay_min_db,
     )

@@ -280,7 +280,6 @@ def main(argv: list[str] | None = None) -> int:
                                   ceiling=zceil, source=z["input"],
                                   airplay_min_db=airplay_min_db)
             w = ShairportWatcher(bus=z["bus"], label=z["name"], lock=lock)
-            zt.push_phone = w.set_airplay_volume     # reverse sync target
             zpol = None
             if z["target"] == "main" and policy is not None:
                 # Main routes power through the shared policy (so the CEC/TV demand
@@ -302,15 +301,11 @@ def main(argv: list[str] | None = None) -> int:
                 w.on_playing = _zpower
             else:
                 w.on_playing = zt.on_playing
-            # Volume sync is on by default (phone slider -> receiver zone volume,
-            # clamped to the zone ceiling; and reverse: receiver remote -> phone).
-            # volume=off leaves the zone's volume untouched (endpoint does its own
-            # software volume) and disables reverse sync for it.
-            vol_on = truthy(z.get("volume", "on"))
-            if vol_on:
+            # Volume sync (phone slider -> receiver zone volume, clamped to the
+            # zone ceiling). volume=off leaves the zone's volume untouched (the
+            # endpoint does its own software volume).
+            if truthy(z.get("volume", "on")):
                 w.on_volume = (lambda db, zt=zt, w=w: zt.on_volume(db, w.state.playing()))
-            else:
-                zt.read_volume = None            # no reverse sync
             watchers.append(w)
             zone_ctx.append((zt, w, zpol))
             if watcher is None or z["target"] == "main":
@@ -367,7 +362,6 @@ def main(argv: list[str] | None = None) -> int:
                     if zpol is not None and zpol.tick(now) is False:
                         zt.set_power(False)
                         log.info("zone %s: power OFF (grace elapsed)", zt.name)
-                    zt.sync_from_receiver(connected, now)
                     # If the receiver's input was switched away from this zone's
                     # AirPlay input, end the session so the phone stops streaming
                     # into a source that isn't playing.

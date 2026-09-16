@@ -1,3 +1,13 @@
+martinmunk-avr-controld (0.4.2) stable; urgency=medium
+
+  * Remove reverse volume sync (receiver -> phone slider). shairport won't relay
+    volume to the AirPlay sender in the NAD-owns-volume setup, so the push was a
+    no-op that only produced misleading "pushed to phone" logs and extra serial
+    polling. Backlogged. Forward (phone -> NAD) and input-stolen handling are
+    unchanged.
+
+ -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Wed, 16 Sep 2026 13:45:00 +0000
+
 martinmunk-avr-controld (0.4.1) stable; urgency=medium
 
   * feed_demand: when a source demand clears while the receiver stays on for

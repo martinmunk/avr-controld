@@ -80,72 +80,9 @@ def test_stop_powers_zone_off():
     assert ("set_extra", "zone2_power", False) in b.calls
     # source is only (re)selected on start, not on stop
     assert not any(c == ("set_extra", "zone2_source", "AirPlay 2") for c in b.calls)
-
-
-# ---- reverse sync (receiver remote -> phone slider) ------------------------
-from avrcontrold.volume import airplay_db_to_pct, airplay_pct_to_db
+# ---- shared import for the zone-target unit tests below --------------------
 from avrcontrold.zones import ZoneTarget
 
-
-def _rev_zone(cur_pct_box, pushed):
-    """A ZoneTarget wired with stub read/push for reverse-sync tests."""
-    return ZoneTarget(
-        name="z", set_volume=lambda p: True, set_mute=lambda m: True,
-        set_power=lambda o: True, set_source=None, ceiling=100,
-        read_volume=lambda: cur_pct_box[0],
-        push_phone=lambda db: (pushed.append(db) or True),
-    )
-
-
-def test_airplay_pct_to_db_inverts_db_to_pct():
-    for db in (-30.0, -20.0, -10.0, 0.0):
-        assert abs(airplay_pct_to_db(airplay_db_to_pct(db)) - db) < 0.5
-
-
-def test_reverse_no_push_when_disconnected():
-    cur = [50]; pushed = []
-    zt = _rev_zone(cur, pushed)
-    zt.sync_from_receiver(connected=False)
-    assert pushed == []
-
-
-def test_reverse_first_read_is_baseline():
-    cur = [50]; pushed = []
-    zt = _rev_zone(cur, pushed)
-    zt.sync_from_receiver(True)          # baseline only
-    assert pushed == []
-    zt.sync_from_receiver(True)          # unchanged -> still nothing
-    assert pushed == []
-
-
-def test_reverse_small_change_within_deadband_ignored():
-    cur = [50]; pushed = []
-    zt = _rev_zone(cur, pushed)
-    zt.sync_from_receiver(True)          # baseline 50
-    cur[0] = 51                          # +1, within deadband
-    zt.sync_from_receiver(True)
-    assert pushed == []
-
-
-def test_reverse_real_change_pushes_mapped_db():
-    cur = [50]; pushed = []
-    zt = _rev_zone(cur, pushed)
-    zt.sync_from_receiver(True)          # baseline 50
-    cur[0] = 100                         # remote turned it up
-    zt.sync_from_receiver(True)
-    assert len(pushed) == 1
-    assert abs(pushed[0] - airplay_pct_to_db(100)) < 0.01   # 0 dB at 100%
-
-
-def test_reverse_suppresses_echo_of_our_own_set():
-    cur = [30]; pushed = []
-    zt = _rev_zone(cur, pushed)
-    zt.sync_from_receiver(True)          # baseline 30
-    # phone -> receiver: on_volume drives the receiver and records the level
-    zt.on_volume(-15.0, playing=True)    # airplay -15 over [-30,0] -> 50%
-    cur[0] = 50                          # receiver now reads what we set
-    zt.sync_from_receiver(True)
-    assert pushed == []                  # our own change is not echoed back
 
 
 # ---- input-stolen detection (drop AirPlay session on input switch) ---------
