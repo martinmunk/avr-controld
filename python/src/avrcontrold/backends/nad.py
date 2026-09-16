@@ -242,9 +242,22 @@ class NADBackend(Backend):
         return bool(r and "=" in r)
 
     def extras(self) -> list[ExtraSpec]:
-        return list(_NAD_EXTRAS)
+        ex = list(_NAD_EXTRAS)
+        names = self.get_inputs()
+        if names:
+            ex.append(ExtraSpec("zone2_source", "select", "Zone 2 Source",
+                                writable=True, options=names, icon="mdi:import"))
+        return ex
 
     def get_extra(self, key: str):
+        if key == "zone2_source":
+            v = self._q("Zone2.Source")
+            if v is None:
+                return None
+            try:
+                return self._num_to_name.get(int(v), str(v))
+            except (ValueError, TypeError):
+                return str(v)
         spec = _NAD_EXTRA_VAR.get(key)
         if spec is None:
             return None
@@ -262,6 +275,9 @@ class NADBackend(Backend):
         return v
 
     def set_extra(self, key: str, value) -> bool:
+        if key == "zone2_source":
+            num = self._name_to_num.get(str(value))
+            return self._s("Zone2.Source", str(num) if num is not None else str(value))
         spec = _NAD_EXTRA_VAR.get(key)
         if spec is None:
             return False

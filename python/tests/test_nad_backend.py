@@ -200,3 +200,20 @@ def test_source_discovery_maps_names_and_numbers():
     assert be.set_input("CD")                        # name -> number 3
     assert rx.source == "3"
     assert be.get_input() == "CD"
+
+
+def test_zone2_source_select_extra():
+    rx = FakeNad(source="1")
+    rx.vars.update({"Source1.Name": "TV", "Source1.Enabled": "Yes",
+                    "Source2.Name": "AirPlay", "Source2.Enabled": "Yes",
+                    "Zone2.Source": "1"})
+    be = NADBackend("/dev/ttyUSB0", receiver=rx)
+    assert be.connect()
+    specs = {e.key: e for e in be.extras()}
+    assert "zone2_source" in specs
+    assert specs["zone2_source"].component == "select"
+    assert specs["zone2_source"].options == ["TV", "AirPlay"]
+    assert be.get_extra("zone2_source") == "TV"          # Zone2.Source=1 -> TV
+    assert be.set_extra("zone2_source", "AirPlay")       # name -> number 2
+    assert rx.vars["Zone2.Source"] == "2"
+    assert be.get_extra("zone2_source") == "AirPlay"
