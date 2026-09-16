@@ -116,6 +116,10 @@ def parse_zones(cfg: dict) -> list[dict]:
             "target": cfg.get(p + "target", "main").lower(),
             "input": cfg.get(p + "input", ""),
             "max_volume": cfg.get(p + "max_volume", ""),  # "" => inherit global
+            # volume sync (phone slider -> receiver zone). "off" leaves the zone's
+            # volume alone (e.g. shairport does software volume on the endpoint),
+            # driving only power/source. Default on.
+            "volume": cfg.get(p + "volume", "on"),
         })
     return zones
 
@@ -243,7 +247,11 @@ def main(argv: list[str] | None = None) -> int:
                                 feed_demand(f"airplay:{zn}", p, inp))
             else:
                 w.on_playing = zt.on_playing
-            w.on_volume = (lambda db, zt=zt, w=w: zt.on_volume(db, w.state.playing()))
+            # Volume sync is on by default (phone slider -> receiver zone volume,
+            # clamped to the zone ceiling). volume=off leaves the zone's volume
+            # untouched (endpoint does its own software volume).
+            if truthy(z.get("volume", "on")):
+                w.on_volume = (lambda db, zt=zt, w=w: zt.on_volume(db, w.state.playing()))
             watchers.append(w)
             if watcher is None or z["target"] == "main":
                 watcher = w
