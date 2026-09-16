@@ -178,9 +178,28 @@ class ShairportWatcher(threading.Thread):
                     continue
                 if msg is None or len(msg.body) < 2:
                     continue
-                interface, changed = msg.body[0], msg.body[1]
+                # Coalesce a burst: dragging the phone slider emits many
+                # AirplayVolume signals in a few ms. Drain everything already
+                # queued and fold it into state, then act ONCE on the final
+                # value -- otherwise every intermediate volume is written to the
+                # receiver over the (slow) serial port, so the last one lands
+                # seconds late. Non-burst traffic drains empty immediately and
+                # behaves as before.
+                batch = [msg]
+                while True:
+                    try:
+                        m2 = conn.recv_until_filtered(q, timeout=0.05)
+                    except TimeoutError:
+                        break
+                    except Exception:
+                        break
+                    if m2 is None or len(m2.body) < 2:
+                        continue
+                    batch.append(m2)
                 with self.lock:
-                    touched = self.state.apply_changed(interface, changed)
+                    touched: set[str] = set()
+                    for m in batch:
+                        touched |= self.state.apply_changed(m.body[0], m.body[1])
                     if "playing" in touched:
                         self._emit_playing()
                     if "volume" in touched and self.on_volume and self.state.volume_db is not None:

@@ -17,6 +17,7 @@ ceiling clamp) identical for every zone and unit-testable with a fake backend.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -31,6 +32,11 @@ log = logging.getLogger(__name__)
 # differ from what we asked by ~1 through rounding; only a real remote change
 # (bigger step) should be pushed back to the phone.
 _REVERSE_DEADBAND_PCT = 2
+
+# After a phone->receiver volume change, hold off reverse pushes this long so an
+# active slider drag isn't fought by us pushing the receiver's (lagging) readback
+# back to the phone.
+_REVERSE_SUPPRESS_S = 3.0
 
 
 @dataclass
@@ -61,6 +67,9 @@ class ZoneTarget:
     # internal: last receiver volume percent we have accounted for, so a change
     # we caused (phone -> receiver) is not echoed back to the phone.
     _observed_pct: Optional[int] = None
+    # internal: monotonic time until which reverse pushes are suppressed (set on
+    # each forward phone->receiver change).
+    _suppress_until: float = 0.0
 
     def on_playing(self, playing: bool) -> None:
         """shairport play-state flipped: power the zone on/off and select its
@@ -90,10 +99,12 @@ class ZoneTarget:
             airplay_db_to_pct(db, min_db=self.airplay_min_db), self.ceiling)
         self.set_volume(pct)
         # We just drove the receiver to this level; record it so reverse sync
-        # doesn't echo our own change back to the phone.
+        # doesn't echo our own change back to the phone, and hold reverse off
+        # briefly so an active drag isn't fought.
         self._observed_pct = pct
+        self._suppress_until = time.monotonic() + _REVERSE_SUPPRESS_S
 
-    def sync_from_receiver(self, connected: bool) -> None:
+    def sync_from_receiver(self, connected: bool, now: float | None = None) -> None:
         """Reverse sync: if the receiver's volume changed on its own (IR remote,
         front panel), push the new level to the phone slider via SetAirplayVolume.
 
@@ -103,6 +114,10 @@ class ZoneTarget:
         """
         if not connected or self.read_volume is None or self.push_phone is None:
             return
+        if now is None:
+            now = time.monotonic()
+        if now < self._suppress_until:
+            return                            # just drove it from the phone
         cur = self.read_volume()
         if cur is None:
             return

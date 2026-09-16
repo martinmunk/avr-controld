@@ -213,7 +213,8 @@ def main(argv: list[str] | None = None) -> int:
     bridge = MqttBridge(device, backend, transport,
                         ceiling=ceiling,
                         discovery_prefix=cfg.get("discovery_prefix", "homeassistant"),
-                        on_demand=(feed_demand if policy is not None else None))
+                        on_demand=(feed_demand if policy is not None else None),
+                        lock=lock)
 
     transport.on_connect = lambda: _locked(lock, bridge.announce)
     transport.on_message = lambda t, p: _locked(lock, lambda: bridge.handle_message(t, p))
@@ -313,6 +314,8 @@ def main(argv: list[str] | None = None) -> int:
     transport.start()
     try:
         while not stop.wait(poll_interval):
+            # Keep each lock hold short so interactive socket commands (CEC/phone
+            # volume, DEMAND) never wait behind a full serial state sweep.
             with lock:
                 if not backend.is_connected():
                     backend.connect()
@@ -322,15 +325,18 @@ def main(argv: list[str] | None = None) -> int:
                 if policy is not None and policy.tick(time.monotonic()) is False:
                     backend.set_power(False)
                     log.info("power: OFF (no demand, grace elapsed)")
-                # Per-zone: flush matured power-off grace, then reverse volume
-                # sync (receiver remote/front panel -> phone slider).
-                now = time.monotonic()
-                for zt, w, zpol in zone_ctx:
+            # Per-zone: flush matured power-off grace, then reverse volume sync
+            # (receiver remote/front panel -> phone slider). One lock per zone.
+            now = time.monotonic()
+            for zt, w, zpol in zone_ctx:
+                with lock:
                     if zpol is not None and zpol.tick(now) is False:
                         zt.set_power(False)
                         log.info("zone %s: power OFF (grace elapsed)", zt.name)
-                    zt.sync_from_receiver(w.state.active or w.state.playing())
-                bridge.publish_state()
+                    zt.sync_from_receiver(w.state.active or w.state.playing(), now)
+            # publish_state takes the lock per read internally (released between
+            # reads), so this long sweep doesn't block interactive commands.
+            bridge.publish_state()
     finally:
         for w in watchers:
             w.stop()

@@ -40,12 +40,18 @@ def _read(backend: Backend, key: str):
 class MqttBridge:
     def __init__(self, device: E.Device, backend: Backend, client: MqttClient,
                  *, ceiling: int = 100, discovery_prefix: str = "homeassistant",
-                 on_demand=None):
+                 on_demand=None, lock=None):
         self.device = device
         self.backend = backend
         self.client = client
         self.ceiling = ceiling
         self.prefix = discovery_prefix
+        # Optional serial lock: when set, publish_state takes it per backend read
+        # and releases between reads, so a long state sweep over a slow serial
+        # port doesn't block interactive commands (CEC/phone volume) waiting on
+        # the same lock. When None, reads are unguarded (caller-serialised).
+        from contextlib import nullcontext
+        self._lock = lock if lock is not None else nullcontext()
         # Generic power-policy hook: HA can publish avrcontrold/<node>/demand/<name>
         # = ON/OFF (e.g. "tv" when the TV/Shield is active) to keep the receiver
         # powered. Backend-agnostic; the daemon feeds these to the PowerPolicy.
@@ -78,10 +84,13 @@ class MqttBridge:
     # ---- state out ------------------------------------------------------
     def publish_state(self, force: bool = False) -> None:
         for e in self.entities:
-            if e.key in self._extra_specs:
-                payload = E.encode_extra(e.component, self.backend.get_extra(e.key))
-            else:
-                payload = E.encode_state(e.key, _read(self.backend, e.key))
+            # Take the serial lock only around the read, then release it before
+            # the next entity, so interactive socket commands can interleave.
+            with self._lock:
+                if e.key in self._extra_specs:
+                    payload = E.encode_extra(e.component, self.backend.get_extra(e.key))
+                else:
+                    payload = E.encode_state(e.key, _read(self.backend, e.key))
             if payload is None:
                 continue
             if not force and self._last.get(e.key) == payload:
