@@ -1,158 +1,129 @@
 # Two-zone AirPlay over a NAD T 757 (Living Room + Dining Room)
 
-Status: design / plan. Not yet built. Supersedes the older, now-stale
-`MULTI_ZONE_AND_SHARED_CONNECTION.md` note at the repo root (which predates the
-`avr-controld` broker and the D-Bus volume work).
+Status: **Living Room is built and live; Dining Room (Zone 2) AirPlay is a plan.**
+Rewritten 2026-09-16 after confirming a hard T 757 limitation that invalidates
+the earlier "coax → Zone 2" design (see *What changed* at the end). Supersedes
+the stale `MULTI_ZONE_AND_SHARED_CONNECTION.md` at the repo root.
 
 ## Goal
 
-Present **two AirPlay endpoints** on the phone — "Living Room" and "Dining
-Room" — **each with its own volume slider**, both driving a single **NAD T 757**
-receiver that replaces the current living-room Denon:
+Two AirPlay endpoints on the phone — "Living Room" and "Dining Room" — both
+driving one **NAD T 757**:
 
-- **Living Room → NAD Main zone**
-- **Dining Room → NAD Zone 2**
+- **Living Room → NAD Main zone** — **done and live.**
+- **Dining Room → NAD Zone 2** — **not yet possible as-wired** (see below); this
+  doc is the cheapest route to make it work.
 
-The owner is fine with **both rooms playing the same audio**. The only thing that
-must be independent per room is **volume** (and on/off), controlled from the
-phone's per-speaker AirPlay sliders.
+Same audio in both rooms is fine; only **volume/on-off** must be per-room.
 
-## Hardware reality: the Digi+ is one stream on two connectors
+## Hardware reality (two hard constraints)
 
-The Raspberry Pi's **HiFiBerry Digi+** exposes an optical (Toslink) **and** a
-coaxial (RCA) S/PDIF output, but they are driven **in parallel from one WM8804
-S/PDIF transmitter** — they carry the **identical signal simultaneously**. It is
-one audio stream on two connectors, **not** two independent outputs. (ALSA
-confirms this: the card presents a single playback device, `wm8804-spdif-0`.)
+### 1. The T 757's Zone 2 is ANALOG-ONLY (the decisive one)
 
-Consequence:
+Confirmed on this unit (firmware v1.38) and in NAD's docs: **the T 757 does not
+route digital audio (HDMI, optical, coax) to Zone 2.** Only a source whose
+**analog** audio input is connected can be used as a Zone 2 source; the T 757
+cannot down-mix a digital signal to the second zone (the pricier 777/787 can).
 
-- optical → **NAD Main** input and coax → **NAD Zone 2** input works, but **both
-  inputs receive the same audio**.
-- Truly **independent content** per room would require a **second real digital
-  output** (a USB-to-S/PDIF adapter on the same Pi, or a second Pi). The owner
-  accepted same-audio, so this is out of scope for the first build.
+Verified live: the **Turntable** (analog, Source 5) plays in Zone 2; **AirPlay**
+(which arrives digitally via optical) plays in Main but is **silent in Zone 2**,
+regardless of Zone 2 volume.
 
-Also note: assigning the NAD's surround-back amp channels to **Zone 2** means the
-living room (Main) then runs at most **5.1** (the back terminals are repurposed
-to power the dining room).
+Consequence: **Zone 2 needs an analog line-level feed.** Any plan that sends the
+AirPlay audio to Zone 2 over optical/coax is impossible on this receiver.
 
-## The design: one real stream + a "phantom" second instance
+### 2. The HiFiBerry Digi+ is digital-only (optical + coax, one stream)
 
-Two `shairport-sync` instances, one per room:
+The Pi's Digi+ has optical **and** coax, but they are one WM8804 S/PDIF stream on
+two connectors — and both are **digital**. So the existing Pi output cannot feed
+Zone 2 at all (constraint 1). Getting AirPlay to Zone 2 requires **a new analog
+output**.
 
-- **Instance 1 — "Living Room"**: real audio output to the Digi+ (which feeds
-  **both** NAD inputs via optical + coax). Its AirPlay volume maps to **NAD
-  `Main.Volume`**.
-- **Instance 2 — "Dining Room"**: audio output to a **null sink** (shairport's
-  `pipe`/`stdout` backend to `/dev/null`, or a dummy ALSA null device). It
-  **produces no audio**. It exists only to be a **second AirPlay endpoint** that
-  exposes a **second volume slider**. Its AirPlay volume maps to **NAD
-  `Zone2.Volume`**.
+## What is already built and live (Living Room + full NAD control)
 
-### Usage model
+- `avr-controld` (Python) owns the NAD over RS232 (stable `by-id` path) and
+  bridges it to Home Assistant over MQTT: power, volume (0-100), mute, **source
+  select** (auto-discovered names), bass, treble, **Zone 2 power/volume(%)/mute/
+  source**, sleep, listening mode, dimmer, model, firmware.
+- **Living-Room AirPlay → NAD Main**: shairport (optical → NAD Main), the daemon
+  powers the NAD on + selects the AirPlay input when it plays, and the phone
+  slider drives Main volume (D-Bus `AirplayVolume`, clamped to `max_volume`).
+- **CEC volume relay**: TV/Shield remote → NAD over RS232 (audio over Toslink).
+- NAD sources renamed over RS232: Source 1 = **TV** (Optical 1), Source 2 =
+  **AirPlay** (Optical 2), Source 5 = **Turntable** (analog). Audio-input
+  assignment itself is menu-only (not on RS232).
 
-Cast to **both** endpoints at once using **AirPlay 2 multi-room** (group both
-speakers on the phone), or cast to Living Room. Both rooms then play instance 1's
-single physical stream (Main gets it over optical, Zone 2 over coax), and the
-phone shows **two independent sliders** that drive the two NAD zone volumes.
+## The plan: cheapest AirPlay-to-Zone-2 (analog feed)
 
-**Bonus — perfect sync for free:** because both rooms are literally the same
-physical S/PDIF stream, there is no multi-room clock-sync problem to solve.
+Give the Pi a cheap **analog** output and run a **second AirPlay target** on it,
+wired to a NAD **analog** input that Zone 2 can use.
 
-### Important caveat: instance 2 is a volume proxy, not a real player
+### Hardware (~$5-10)
 
-The dining room's sound **always comes from instance 1's feed**. Instance 2's own
-audio is dumped. Therefore:
+- A **USB audio dongle** with a 3.5 mm line/headphone out (CM108-class, a few
+  dollars; or a ~$10 USB DAC for cleaner output). Into the existing StueTærten Pi.
+- A **3.5 mm → RCA** cable to a spare NAD **analog** input.
 
-- Cast to **both** (multi-room), or to **Living Room** → both rooms play, both
-  sliders work. ✅
-- Cast to **Dining Room only** → **silence**, because instance 2 discards its
-  audio and instance 1 is not feeding the Digi+. ❌
+### Signal path
 
-Mental model: *Living Room is the player; both endpoints are volume knobs.* This
-fits the same-audio goal. If independent content per room is ever wanted, that is
-exactly the point at which a second real audio output becomes necessary.
+```
+Phone ─AirPlay─▶ Pi: shairport #2 "Dining Room" ─USB DAC─▶ 3.5mm→RCA
+       ─▶ NAD analog input (assigned to a source) ─▶ Zone 2 ─▶ dining-room speakers
 
-## Why D-Bus volume (not the ALSA mixer) is the enabler
+(live today: Phone ─AirPlay─▶ Pi: shairport #1 ─optical─▶ NAD Main)
+```
 
-With shairport `ignore_volume_control = "yes"` **and its ALSA mixer removed**,
-each instance becomes a **self-contained audio-out + volume-reporter** with no
-dependency on a hardware mixer control. That is what makes running **multiple
-instances** (or containers) clean — otherwise each instance would need its own
-ALSA mixer element, which does not multiply nicely.
+### Build checklist
 
-Key D-Bus facts (learned the hard way this session):
+1. **USB DAC**: plug in, find its ALSA device (`aplay -l`).
+2. **Second shairport-sync instance** ("Dining Room" / "Spisestue"), AirPlay 2,
+   output = the USB DAC, `ignore_volume_control=yes`, **mixer removed**. Prefer a
+   native systemd template instance over Docker (the AVR Pis moved off Docker for
+   AirPlay 2 reliability).
+3. **NAD**: assign an unused source's **audio input = the analog input** you wired
+   (on-screen menu — RS232 can't set audio inputs), name it "Dining Room". Then
+   set **Zone 2 source = Dining Room** (from HA `select.stue_nad_zone_2_source`).
+4. **Amp for Zone 2**: the dining-room speakers must be driven — either the T 757's
+   surround-back amp channels assigned to Zone 2 in the menu (Main then runs ≤5.1),
+   or an external amp on the Zone 2 pre-outs. (Menu-only; not on RS232.)
 
-- **Read the sender's live volume from `org.gnome.ShairportSync.RemoteControl`
-  property `AirplayVolume`** (a dB double). It tracks the sender live, **even
-  under `ignore_volume_control=yes`** (shairport still emits the `pvol` metadata
-  with the sender volume as the first field).
-- **Write the sender's slider via the method
-  `RemoteControl.SetAirplayVolume(d)`** (a method call, dB argument) — this makes
-  shairport report the level back to the sender, so the phone slider follows.
-- **Do NOT use the main-interface `org.gnome.ShairportSync.Volume` property** — it
-  only updates on writes/init and otherwise sits frozen. Reading it was the bug
-  that made pure-D-Bus volume look impossible.
-- **Safety:** the daemon enforces a **hard `max_volume` ceiling on every
-  volume-set path**, so no bug or session-start transient can drive the receiver
-  past it. (This matters: running shairport at full-scale with `ivc=yes` means the
-  receiver's own attenuation, driven by the daemon, is the only volume control —
-  the ceiling is the safety net.)
+### Whole-home
 
-## Control plane
+Both endpoints are AirPlay 2 targets, so grouping "Living Room" + "Dining Room"
+on the phone gives synced whole-home audio (Main via optical, Zone 2 via the
+analog dongle), with independent per-room sliders.
 
-One `avr-controld` instance owns the **single NAD RS232 link** and runs **two
-zone-mapped D-Bus watchers**. Each shairport instance runs on its **own private
-D-Bus** (so both can own the `org.gnome.ShairportSync` name without colliding),
-and the daemon addresses each via the existing **`AVR_DBUS_ADDRESS`** hook:
+## Volume / power integration for Zone 2 (make it as automatic as Main)
 
-- Living-Room bus → `Main.Volume`
-- Dining-Room bus → `Zone2.Volume`
+The daemon already powers Main and syncs its volume from shairport #1's D-Bus.
+For Zone 2 the same idea applies to shairport #2, with one wrinkle:
 
-NAD control is the **TXX7 ASCII protocol** over RS232 (**115200 8N1**, no flow
-control), `Object.Property=Value<CR>` syntax, with objects **`Main.*`** and
-**`Zone2.*`** exposing Power / Volume / Mute / Source and **pollable status
-feedback**. Because the NAD **pushes zone volume changes** over the control link,
-the **reverse direction** (NAD remote or front panel → phone slider via
-`SetAirplayVolume`) is expected to work on the NAD — unlike the Denon, which does
-not push HTTP-driven changes to its control link.
+- **D-Bus name collision**: shairport's D-Bus service name is fixed
+  (`org.gnome.ShairportSync`), so two instances can't both own it on the same bus.
+  Options: run instance #2 on its **own private D-Bus** and point a second daemon
+  watcher at it via the existing **`AVR_DBUS_ADDRESS`** hook (map its
+  `AirplayVolume` → `Zone2.Volume`), **or** consume instance #2's **MQTT** (built
+  into shairport) and drive Zone 2 from the daemon / an HA automation.
+- **Power demand**: shairport #2 playing → a "dining" demand → power Zone 2 on +
+  select the Dining Room source (mirrors the Main power policy).
+- **Safety**: apply a **Zone 2 volume ceiling** on the automated path too, exactly
+  like Main's `max_volume` (Zone 2 at 0 dB is very loud).
 
-## Software work required (build checklist)
+## D-Bus volume facts (still the enabler, now per analog instance)
 
-1. **NAD backend: add `Zone2.*` support.** The current NAD serial backend drives
-   the main zone only; add Zone 2 Power/Volume/Mute/Source (and status parsing).
-2. **Daemon: two zone-mapped D-Bus watchers.** Let `avr-controld` watch two
-   shairport buses at once with a `zone → NAD object` mapping in config (one
-   watcher → `Main.Volume`, the other → `Zone2.Volume`), while still owning the
-   single RS232 connection and serializing access.
-3. **Two shairport-sync instances.** Distinct AirPlay names ("Living Room",
-   "Dining Room"), `ignore_volume_control=yes`, **mixer removed**, each on its
-   **own private D-Bus**, instance 2 using a **null output**. Prefer **native
-   systemd template instances** over Docker: the owner previously moved off Docker
-   to native for AirPlay 2 reliability. (Docker with host networking is possible
-   but adds mDNS/port fiddliness for two AirPlay 2 instances on one host.)
-4. **Physical wiring.** Pi → NAD **RS232** via a USB-serial adapter; Digi+
-   **optical → NAD Main input**, Digi+ **coax → NAD Zone 2 input**.
-5. **NAD setup.** Assign the surround-back amp channels to **Zone 2** (living room
-   then runs ≤ 5.1). NAD MDC serial/upgrade eligibility is **not** relevant here —
-   RS232 control is native to the receiver and independent of the (lightning-fried)
-   HDMI module.
+- Read the sender's live volume from
+  `org.gnome.ShairportSync.RemoteControl.AirplayVolume` (dB double); it tracks the
+  sender even under `ignore_volume_control=yes`.
+- Write the phone slider via the **method** `RemoteControl.SetAirplayVolume(d)`
+  (NOT the frozen main-interface `.Volume` property).
+- The NAD **pushes** zone volume changes over RS232, so reverse sync (NAD
+  remote/front panel → phone slider) is feasible for Zone 2 too.
 
-## Open questions / decisions
+## What changed from the earlier plan
 
-- **AirPlay 2 multi-room grouping across two self-hosted shairport instances** —
-  needs live testing (do two independent instances group cleanly on the phone, and
-  do both sliders behave as expected?).
-- **Docker vs native** for the two instances (leaning native, per above).
-- **Second output path** if independent *content* per room is ever wanted later
-  (USB-S/PDIF adapter or a second Pi) — deferred; not needed for same-audio.
-
-## Relationship to existing components
-
-- `avr-controld` already owns a single AVR connection and serves clients; the
-  D-Bus watcher already accepts `AVR_DBUS_ADDRESS`. Two zone-mapped watchers is an
-  extension of the existing single-watcher volume-sync design.
-- The D-Bus volume path (read `AirplayVolume` / write `SetAirplayVolume`, hard
-  `max_volume` cap) is the same mechanism validated this session on the Denon;
-  here it is applied per-instance and mapped per-zone on the NAD.
+The previous version fed **coax → Zone 2** and used a "phantom" null-output second
+instance purely as a volume proxy, assuming Zone 2 would play the coax digital
+signal. **That cannot work**: Zone 2 is analog-only (constraint 1). The second
+instance must therefore produce **real analog audio** (USB DAC → NAD analog
+input), not a null sink. Everything else (two instances, per-zone D-Bus volume,
+AirPlay 2 grouping) carries over.
