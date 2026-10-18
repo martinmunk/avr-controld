@@ -180,6 +180,6 @@ jobs:
         run: |
           DEB=$(ls martinmunk-avr-controld_*_all.deb | head -1)
           dpkg -i "$DEB" || (apt-get -y -f install && dpkg -i "$DEB")
-          /opt/avr-controld/venv/bin/python -c "import avrcontrold, nad_receiver, paho.mqtt.client, serial, jeepney; print('venv imports OK')"
+          /opt/avr-controld/venv/bin/python -c "import avrcontrold, nad_receiver, opalum_receiver, paho.mqtt.client, serial, jeepney; print('venv imports OK')"
           timeout 2 /opt/avr-controld/venv/bin/avr-controld -o backend=demo -o node_id=ci -o mqtt_host=127.0.0.1 -o poll_interval=1 || true
           echo "venv package verify OK"

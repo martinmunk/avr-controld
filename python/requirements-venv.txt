@@ -1,5 +1,9 @@
 # Pinned runtime deps bundled into the shipped virtualenv (all pure Python).
+# opalum-receiver lives on the Forgejo PyPI registry (plain HTTP, LAN only).
+--extra-index-url http://forgejo.servers.vejen.loc.martinmunk.com:3000/api/packages/martinmunk/pypi/simple/
+--trusted-host forgejo.servers.vejen.loc.martinmunk.com
 nad-receiver==0.4.0
 paho-mqtt==2.1.0
 pyserial==3.5
 jeepney==0.9.0
+opalum-receiver==0.1.0

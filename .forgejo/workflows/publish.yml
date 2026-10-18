@@ -134,7 +134,7 @@ jobs:
         run: |
           DEB=$(ls martinmunk-avr-controld_*_all.deb | head -1)
           dpkg -i "$DEB" || (apt-get -y -f install && dpkg -i "$DEB")
-          /opt/avr-controld/venv/bin/python -c "import avrcontrold, nad_receiver, paho.mqtt.client, serial, jeepney; print('venv imports OK')"
+          /opt/avr-controld/venv/bin/python -c "import avrcontrold, nad_receiver, opalum_receiver, paho.mqtt.client, serial, jeepney; print('venv imports OK')"
 
       - name: Publish to Forgejo Package Registry
         env:

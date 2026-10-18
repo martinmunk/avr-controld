@@ -83,6 +83,9 @@ def build_backend(cfg: dict) -> Backend:
             max_db=float(cfg.get("max_db", "0")),
             sources=[s.strip() for s in sources],
         )
+    if kind in ("opalum", "opalum_serial"):
+        from .backends.opalum import OpalumBackend
+        return OpalumBackend(cfg.get("device", "/dev/ttyUSB0"))
     raise SystemExit(f"unknown backend: {kind}")
 
 
