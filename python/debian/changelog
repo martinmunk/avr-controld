@@ -1,3 +1,15 @@
+martinmunk-avr-controld (0.5.0) stable; urgency=medium
+
+  * New Opalum backend (backend=opalum) on the opalum-receiver library:
+    power/volume/mute/source + auto_standby (sta0/sta1). Write-only RS232
+    protocol, so state is what the daemon last set -- the daemon must be the
+    port's only owner. Deployed on VærkstedsTærten in place of the ALSA
+    mixer plugin + avr-power hooks (shairport ignore_volume_control=yes,
+    the daemon drives the Opalum from the D-Bus AirPlay volume, ceiling 50).
+  * venv bundles opalum-receiver 0.1.0 from the Forgejo PyPI registry.
+
+ -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Sun, 18 Oct 2026 14:15:21 +0000
+
 martinmunk-avr-controld (0.4.3) stable; urgency=medium
 
   * NAD: the receiver's own auto-standby timer was powering it off under a
