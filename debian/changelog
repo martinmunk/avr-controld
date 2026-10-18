@@ -1,3 +1,12 @@
+martinmunk-avr-controld (0.5.2) stable; urgency=medium
+
+  * avr-controld is now its own repo (history kept): the C++ socket clients
+    stay in alsa-avr-control, the socket protocol is documented in
+    docs/socket-protocol.md.
+  * Maintainer email corrected in control/changelog.
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Sun, 18 Oct 2026 19:50:35 +0000
+
 martinmunk-avr-controld (0.5.1) stable; urgency=medium
 
   * shairport watcher: replay the last known AirPlay volume on the play edge.
