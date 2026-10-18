@@ -48,6 +48,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Changelog identity comes from git, never from whatever DEBEMAIL happens to be set.
+export DEBFULLNAME="$(git config user.name)"
+export DEBEMAIL="$(git config user.email)"
+if [ -z "$DEBEMAIL" ]; then
+    echo -e "${RED}git user.email is not set; refusing to write a changelog entry${NC}"; exit 1
+fi
+
 # Get current version from changelog
 CURRENT_VERSION=$(dpkg-parsechangelog -S Version)
 PACKAGE_NAME=$(dpkg-parsechangelog -S Source)
