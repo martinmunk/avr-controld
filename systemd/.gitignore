@@ -1,3 +1,0 @@
-# Don't track actual deployed service.conf files
-# Only track the example files (service.conf.*)
-service.conf

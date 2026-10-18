@@ -1,4 +1,4 @@
-name: Test Debian Build
+name: Test + package (avr-controld)
 
 on:
   push:
@@ -14,110 +14,6 @@ env:
   LANG: C.UTF-8
 
 jobs:
-  build:
-    name: Build (${{ matrix.arch }})
-    runs-on: docker
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            codename: trixie
-          - arch: arm64
-            codename: trixie
-
-    container:
-      image: debian:trixie
-
-    steps:
-      - name: Install Node.js and git
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq git ca-certificates curl
-          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
-          apt-get install -y -qq nodejs
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install build tools
-        run: |
-          apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file pkg-config
-
-      - name: Add arm64 architecture and cross toolchain
-        if: matrix.arch == 'arm64'
-        run: |
-          dpkg --add-architecture arm64
-          apt-get update -qq
-          # libstdc++6:arm64 is required for dpkg-shlibdeps to resolve the C++
-          # plugins/avr-power; native libasound2-dev too so buildpackage.sh's
-          # dpkg-checkbuilddeps passes without the mk-build-deps/equivs path.
-          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libsystemd-dev:arm64 libstdc++6:arm64 libasound2-dev libsystemd-dev
-          # trixie's pkgconf dropped the pkg-config crosswrapper, so the
-          # aarch64-linux-gnu-pkg-config that dh_auto_configure invokes is gone
-          # and libsystemd is "not found" -> cmake configure fails. Recreate it.
-          printf '#!/bin/sh\nexport PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig\nexec pkgconf "$@"\n' > /usr/bin/aarch64-linux-gnu-pkg-config
-          chmod +x /usr/bin/aarch64-linux-gnu-pkg-config
-
-      - name: Install native build dependencies (amd64)
-        if: matrix.arch == 'amd64'
-        run: |
-          apt-get install -y -qq libasound2-dev libsystemd-dev
-
-      - name: Build package (buildpackage.sh stamps +debian<N><codename>)
-        run: |
-          if [ "${{ matrix.arch }}" != "$(dpkg --print-architecture)" ]; then
-            TARGET_ARCH=${{ matrix.arch }} ./buildpackage.sh
-          else
-            ./buildpackage.sh
-          fi
-          ls -lh build-deb/*.deb
-
-      # In-job assertion (this Forgejo instance serves no Actions logs, and
-      # upload-artifact is unreliable here, so correctness is proven here).
-      - name: Verify built package
-        run: bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
-
-  tests:
-    name: Unit + Integration + Broker tests
-    runs-on: docker
-    container:
-      image: debian:trixie
-    steps:
-      - name: Install Node.js and git
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq git ca-certificates curl
-          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
-          apt-get install -y -qq nodejs
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install build + test deps
-        run: |
-          apt-get install -y -qq cmake build-essential libasound2-dev libsystemd-dev pkg-config python3 \
-            libgtest-dev libgmock-dev
-
-      - name: Configure + build (with tests)
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
-          cmake --build build -j"$(nproc)" \
-            --target unit_tests integration_tests broker_tests avr-controld
-
-      - name: Unit tests
-        run: ./build/unit_tests
-
-      - name: Integration tests (mock Denon)
-        run: bash tests/run_integration_tests.sh
-
-      - name: Broker tests (mock Denon + daemon, incl. shared-state + concurrency)
-        run: bash tests/broker/run_broker_tests.sh
-
   python-tests:
     name: Python offline tests (avrcontrold)
     runs-on: docker
@@ -143,7 +39,6 @@ jobs:
         run: apt-get install -y -qq python3 python3-pytest
 
       - name: Run offline unit tests
-        working-directory: python
         run: PYTHONPATH=src python3 -m pytest -q
 
   python-package:
@@ -169,7 +64,6 @@ jobs:
 
       - name: Build venv package
         run: |
-          cd python
           dpkg-buildpackage -b --no-sign -rfakeroot
           ls -lh ../martinmunk-avr-controld_*_all.deb
 
@@ -178,7 +72,7 @@ jobs:
       # the daemon starts.
       - name: Verify package installs and runs
         run: |
-          DEB=$(ls martinmunk-avr-controld_*_all.deb | head -1)
+          DEB=$(ls ../martinmunk-avr-controld_*_all.deb | head -1)
           dpkg -i "$DEB" || (apt-get -y -f install && dpkg -i "$DEB")
           /opt/avr-controld/venv/bin/python -c "import avrcontrold, nad_receiver, opalum_receiver, paho.mqtt.client, serial, jeepney; print('venv imports OK')"
           timeout 2 /opt/avr-controld/venv/bin/avr-controld -o backend=demo -o node_id=ci -o mqtt_host=127.0.0.1 -o poll_interval=1 || true

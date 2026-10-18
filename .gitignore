@@ -1,44 +1,16 @@
-# Build directories
-build/
-build-*/
-build-alpine/
-*-out/
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+*.pyc
 
-# CMake
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-Makefile
-*.cmake
-
-# Compiled files
-*.o
-*.so
-*.a
-*.la
-*.lo
-
-# Debian packaging
+# Debian packaging (venv built at /opt/avr-controld/venv during build)
 debian/.debhelper/
 debian/files
 debian/*.debhelper
-debian/*.log
+debian/*.debhelper.log
 debian/*.substvars
-debian/martinmunk-alsa-control-avr/
-
-# Python
-__pycache__/
-*.pyc
-.pytest_cache/
-
-# IDE
-.vscode/
-.idea/
+debian/martinmunk-avr-controld/
+debian/debhelper-build-stamp
 *.swp
-*.swo
 *~
-
-# Temporary files
-tmp/
-obj-*/
-martinmunk-avr-controld_*

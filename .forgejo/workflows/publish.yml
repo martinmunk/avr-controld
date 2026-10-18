@@ -1,4 +1,4 @@
-name: Build and Publish Debian Package
+name: Build and Publish avr-controld
 
 on:
   push:
@@ -11,98 +11,6 @@ env:
   LANG: C.UTF-8
 
 jobs:
-  # Single job: build and publish in one go. actions/upload-artifact is
-  # unreliable on this runner, so we avoid the build->publish artifact handoff
-  # entirely and curl the freshly-built .deb straight to the registry.
-  build-and-publish:
-    name: Build & Publish (${{ matrix.arch }})
-    runs-on: docker
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            codename: trixie
-          - arch: arm64
-            codename: trixie
-
-    container:
-      image: debian:trixie
-
-    steps:
-      - name: Install Node.js and git
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq git ca-certificates curl
-          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
-          apt-get install -y -qq nodejs
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install build tools
-        run: |
-          apt-get install -y -qq dpkg-dev debhelper fakeroot cmake build-essential rsync devscripts file pkg-config
-
-      - name: Add arm64 architecture and cross toolchain
-        if: matrix.arch == 'arm64'
-        run: |
-          dpkg --add-architecture arm64
-          apt-get update -qq
-          # libstdc++6:arm64 needed for dpkg-shlibdeps on the C++ objects
-          apt-get install -y -qq crossbuild-essential-arm64 libasound2-dev:arm64 libsystemd-dev:arm64 libstdc++6:arm64 libasound2-dev libsystemd-dev
-          # trixie's pkgconf dropped the pkg-config crosswrapper, so the
-          # aarch64-linux-gnu-pkg-config that dh_auto_configure invokes is gone
-          # and libsystemd is "not found" -> cmake configure fails. Recreate it.
-          printf '#!/bin/sh\nexport PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig\nexec pkgconf "$@"\n' > /usr/bin/aarch64-linux-gnu-pkg-config
-          chmod +x /usr/bin/aarch64-linux-gnu-pkg-config
-
-      - name: Install native build dependencies (amd64)
-        if: matrix.arch == 'amd64'
-        run: |
-          apt-get install -y -qq libasound2-dev libsystemd-dev
-
-      - name: Build package (buildpackage.sh stamps +debian<N><codename>)
-        run: |
-          if [ "${{ matrix.arch }}" != "$(dpkg --print-architecture)" ]; then
-            TARGET_ARCH=${{ matrix.arch }} ./buildpackage.sh
-          else
-            ./buildpackage.sh
-          fi
-          ls -lh build-deb/*.deb
-
-      - name: Verify built package
-        run: bash .forgejo/verify-package.sh build-deb ${{ matrix.arch }}
-
-      - name: Publish to Forgejo Package Registry
-        env:
-          FORGEJO_TOKEN: ${{ secrets.PACKAGE_REGISTRY_TOKEN }}
-          FORGEJO_URL: ${{ github.server_url }}
-        run: |
-          set -eu
-          PACKAGE_FILE=$(ls build-deb/*.deb | grep -v dbgsym | head -1)
-          if [ -z "$PACKAGE_FILE" ]; then
-            echo "No package file found!"; exit 1
-          fi
-          echo "=== Publishing to Forgejo Debian Repository ==="
-          echo "File:         $PACKAGE_FILE"
-          echo "Distribution: ${{ matrix.codename }}"
-          echo "Component:    main"
-          echo "Architecture: ${{ matrix.arch }}"
-          code=$(curl -s -o /tmp/upload.out -w '%{http_code}' -H "Authorization: token $FORGEJO_TOKEN" \
-            --upload-file "$PACKAGE_FILE" \
-            "$FORGEJO_URL/api/packages/${{ github.repository_owner }}/debian/pool/${{ matrix.codename }}/main/upload")
-          echo "HTTP $code"; cat /tmp/upload.out 2>/dev/null || true; echo
-          case "$code" in
-            201|202) echo "published" ;;
-            409) echo "this version already exists in the registry - skipping (idempotent)" ;;
-            *) echo "upload failed (HTTP $code)"; exit 1 ;;
-          esac
-          echo ""
-          echo "Successfully published $(basename "$PACKAGE_FILE")"
-
   publish-python:
     name: Build & Publish venv package (arch all)
     runs-on: docker
@@ -126,13 +34,12 @@ jobs:
 
       - name: Build venv package
         run: |
-          cd python
           dpkg-buildpackage -b --no-sign -rfakeroot
           ls -lh ../martinmunk-avr-controld_*_all.deb
 
       - name: Verify package installs and runs
         run: |
-          DEB=$(ls martinmunk-avr-controld_*_all.deb | head -1)
+          DEB=$(ls ../martinmunk-avr-controld_*_all.deb | head -1)
           dpkg -i "$DEB" || (apt-get -y -f install && dpkg -i "$DEB")
           /opt/avr-controld/venv/bin/python -c "import avrcontrold, nad_receiver, opalum_receiver, paho.mqtt.client, serial, jeepney; print('venv imports OK')"
 
@@ -142,7 +49,7 @@ jobs:
           FORGEJO_URL: ${{ github.server_url }}
         run: |
           set -eu
-          PACKAGE_FILE=$(ls martinmunk-avr-controld_*_all.deb | head -1)
+          PACKAGE_FILE=$(ls ../martinmunk-avr-controld_*_all.deb | head -1)
           echo "Publishing $PACKAGE_FILE to debian/trixie/main"
           code=$(curl -s -o /tmp/upload.out -w '%{http_code}' -H "Authorization: token $FORGEJO_TOKEN" \
             --upload-file "$PACKAGE_FILE" \

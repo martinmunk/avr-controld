@@ -1,6 +1,10 @@
-# Debhelper generated files
+# debhelper build byproducts
 .debhelper/
-debhelper-build-stamp
-*.substvars
 files
-martinmunk-alsa-avr-pi/
+*.substvars
+*.debhelper
+*.debhelper.log
+debhelper-build-stamp
+# per-package staging dir
+martinmunk-avr-controld/
+tmp/

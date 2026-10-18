@@ -1,235 +1,83 @@
-martinmunk-alsa-control-avr (0.3.2) stable; urgency=medium
-
-  * avr-cec-relay: re-assert the TV demand on every TV-power poll while
-    the TV is on, so the receiver recovers its input after an avr-
-    controld restart (previously only sent on a TV state change). Pairs
-    with the daemon acting on demand activation edges.
-
- -- Martin Munk Hansen <hansen@martinmunk.com>  Wed, 16 Sep 2026 09:31:31 +0000
-
-martinmunk-alsa-control-avr (0.3.1) stable; urgency=medium
-
-  * Denon IP: recover from a dropped telnet session. The receiver closes idle
-    sessions; the long-lived avr-controld kept the dead socket and every
-    command failed until restart (no volume/input control on StueTaerten).
-    Now detects the close before each send, reconnects and re-sends.
-  * Denon IP: volume/mute/power/input reads ask the receiver instead of a
-    cache (the remote and HDMI-CEC change it too). get_power no longer
-    reports "connected" as "on".
-  * Input selection is per session again: the "input" parameter is exposed as
-    the read-only "Input Source Default" element and applied by avr-power on,
-    which selects it BEFORE powering on (Denon powers on straight into a
-    non-HDMI input; PWON with an HDMI input selected wakes source + TV over
-    CEC, which then grab the receiver). avr-power restore no longer switches
-    the input back when it is about to power off, for the same reason.
-  * Tests: mock XDROP/XDROPOTHERS hooks; reconnect, live-read and
-    configured-input tests at integration and broker level.
-  * avr-controld: optional shairport-sync D-Bus integration (sd-bus). With
-    config "dbus=drive" the daemon watches shairport's play/pause and
-    now-playing metadata on the system bus and, when playback starts, powers
-    the AVR on and selects the configured input -- verifying via its own live
-    reads that the receiver actually got there and retrying -- then powers off
-    after a grace period (default 120s) once playback stops, so brief pauses
-    and track gaps do not thrash the receiver. "dbus=observe" logs the events
-    without touching the AVR; "dbus=off" (the default) is unchanged behaviour.
-    Enable per node via /etc/avr-controld.conf. The ALSA volume/mute path is
-    untouched. New socket verbs META and PLAYSTATE expose now-playing.
-    New build dep: libsystemd-dev (runtime libsystemd0, already present).
-
- -- Martin Munk Hansen <hansen@martinmunk.com>  Sat, 12 Sep 2026 11:00:00 +0000
-
-martinmunk-alsa-control-avr (0.3.0) stable; urgency=medium
-
-  * Add avr-controld: a single-owner connection broker. One daemon owns each
-    AVR connection (serial/TCP) and serves clients over a Unix socket; the
-    ALSA plugins become socket clients (SocketClientBackend) that auto-spawn
-    it. Fixes per-process connection scoping (serial contention, TCP churn,
-    no shared state). No plugin/avr-power source change.
-
- -- Martin Munk Hansen <hansen@martinmunk.com>  Sun, 09 Aug 2026 21:51:35 +0000
-
-martinmunk-alsa-control-avr (0.2.6) stable; urgency=medium
-
-  * Install the ALSA plugins into the host arch's multiarch dir via
-    GNUInstallDirs (CMAKE_INSTALL_LIBDIR). The old detection hardcoded x86_64
-    and otherwise used /usr/lib/alsa-lib, so arm64/cross builds installed to a
-    directory libasound does not search.
-
- -- Martin Munk Hansen <hansen@martinmunk.com>  Fri, 07 Aug 2026 19:25:00 +0000
-
-martinmunk-alsa-control-avr (0.2.5) stable; urgency=medium
-
-  * postinst: add the shairport-sync service user to the dialout group so the
-    serial AVR backends (Opalum/NAD) can access /dev/ttyUSB* when shairport
-    drives the mixer (guarded; no-op if that user is absent).
-  * Recommends cec-utils (the CEC backend shells out to cec-client).
-  * Point Homepage at Forgejo (gitea is being decommissioned).
-  * Bump debhelper-compat 12 -> 13 (12 is unsatisfiable on Debian 13 trixie,
-    which provides debhelper-compat 13, so the package could not build).
-
- -- Martin Munk Hansen <hansen@martinmunk.com>  Thu, 06 Aug 2026 09:47:59 +0000
-
-martinmunk-alsa-control-avr (0.2.4) stable; urgency=medium
-
-  * Fix dh overrides to actually execute and skip tools
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 02:12:26 +0000
-
-martinmunk-alsa-control-avr (0.2.3) stable; urgency=medium
-
-  * Skip dh_makeshlibs for cross-architecture Alpine binaries
-  * Use dh --without instead of individual overrides
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 03:07:19 +0100
-
-martinmunk-alsa-control-avr (0.2.2) stable; urgency=medium
-
-  * Skip build dependency checks for Alpine packaging
-  * Use node:slim container to build for Debian Trixie
-  * Use matrix.dist for container image selection
-  * Install Node.js in debian:trixie containers
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 02:55:35 +0100
-
-martinmunk-alsa-control-avr (0.2.1) stable; urgency=medium
-
-  * Set correct architecture for Alpine packages
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 02:45:50 +0100
-
-martinmunk-alsa-control-avr (0.2.0) stable; urgency=medium
-
-  * Skip dh_strip for Alpine packages
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 01:39:00 +0000
-
-martinmunk-alsa-control-avr (0.1.14) stable; urgency=medium
-
-  * Skip dh_dwz for Alpine packages
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 02:31:34 +0100
-
-martinmunk-alsa-control-avr (0.1.13) stable; urgency=medium
-
-  * Fix TARGET_ARCH environment variable for buildpackage.sh
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 02:28:41 +0100
-
-martinmunk-alsa-control-avr (0.1.12) stable; urgency=medium
-
-  * Fix Alpine ARM64 cross-compilation to use correct musl toolchain
-  * Disable integration tests in test-debian workflow
-  * Add devscripts dependency for dch command
-  * Use native ARM64 runners for Alpine builds instead of cross-compilation
-  * Use musl.cc cross-compiler for Alpine ARM64 builds
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 02:18:00 +0100
-
-martinmunk-alsa-control-avr (0.1.11) stable; urgency=medium
-
-  * Add rsync to build dependencies for buildpackage.sh
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 02:03:11 +0100
-
-martinmunk-alsa-control-avr (0.1.10) stable; urgency=medium
-
-  * Fix create-release.sh to use dpkg-buildpackage directly
-  * Restore buildpackage.sh and update workflows to use it
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 01:41:48 +0100
-
-martinmunk-alsa-control-avr (0.1.9) stable; urgency=medium
-
-  * Clean up repository: remove old build scripts, test files, and organize Docker files
-  * Fix Alpine package architecture from arm64 to amd64
-  * Restore create-release.sh instead of bump-and-release.sh
-  * Remove scripts/bump-and-release.sh
-  * Add ARM64 cross-compilation for Alpine builds
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 01:38:05 +0100
-
-martinmunk-alsa-control-avr (0.1.8) stable; urgency=medium
-
-  * Add script to bump version and create releases
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 00:04:27 +0000
-
-martinmunk-alsa-control-avr (0.1.7) stable; urgency=medium
-
-  * Separate test and package jobs
-  * Add build dependencies for Alpine packaging
-  * Split workflows into separate test and publish files
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 00:52:13 +0100
-
-martinmunk-alsa-control-avr (0.1.6) stable; urgency=medium
-
-  * Build Alpine packages manually without debhelper
-  * Separate Alpine build and packaging into two jobs
-  * Split workflow by platform
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 00:34:10 +0100
-
-martinmunk-alsa-control-avr (0.1.5) stable; urgency=medium
-
-  * Fix YAML syntax error in workflow file
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 00:19:15 +0100
-
-martinmunk-alsa-control-avr (0.1.4) stable; urgency=medium
-
-  * Use node:alpine container for Alpine builds
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 00:11:55 +0100
-
-martinmunk-alsa-control-avr (0.1.3) stable; urgency=medium
-
-  * Add Alpine Linux build support for volume mounting
-  * Add Alpine Linux builds to CI/CD pipeline
-  * Build in Alpine but package as Debian packages
-  * Only build Alpine packages for ARM64
-  * Use different package name for Alpine builds
-  * Install Alpine package to separate location
-  * Use 'stable' distribution for Alpine packages
-
- -- Martin Munk Hansen <mhansen@roku.com>  Fri, 06 Feb 2026 00:07:24 +0100
-
-martinmunk-alsa-control-avr (0.1.2) stable; urgency=medium
-
-  * Use simple release tags without package prefix
-
- -- Martin Munk Hansen <mhansen@roku.com>  Thu, 05 Feb 2026 23:37:37 +0100
-
-martinmunk-alsa-control-avr (0.1.1) stable; urgency=medium
-
-  * Make create-release.sh interactive by default
-  * Fix Homepage URL to point to Gitea instead of GitHub
-  * Fix workflow tag pattern to match package-prefixed release tags
-
- -- Martin Munk Hansen <mhansen@roku.com>  Thu, 05 Feb 2026 22:32:12 +0000
-
-martinmunk-alsa-control-avr (0.1.0) stable; urgency=medium
-
-  * Use cross-compilation for ARM64 on AMD64 runners
-  * Implement matrix-based builds for multiple distros and architectures
-  * Remove artifact retention policy
-  * Install Node.js for actions/checkout compatibility
-  * Simplify matrix to only build for Debian Trixie
-  * Use direct git clone instead of actions/checkout
-  * Simplify git clone to clone directly to workspace
-  * Add debugging output and clean workspace before clone
-  * Install Node.js before artifact upload
-  * Use node:bookworm-slim image like working shairport-sync-docker workflow
-  * Fix Gitea compatibility and ARM64 cross-compilation
-  * Add build artifact directories to gitignore
-  * Add create-release.sh script from template
-
- -- Martin Munk Hansen <mhansen@roku.com>  Thu, 05 Feb 2026 23:18:53 +0100
-
-martinmunk-alsa-control-avr (0.0.1) stable; urgency=medium
-
-  * Initial release
-  * ALSA control plugins for Denon, NAD, Opalum, and CEC backends
-  * avr-power utility for power control
-
- -- Martin Munk Hansen <martin@martinmunk.dk>  Sun, 02 Feb 2026 23:45:00 +0100
+martinmunk-avr-controld (0.5.1) stable; urgency=medium
+
+  * shairport watcher: replay the last known AirPlay volume on the play edge.
+    Senders set their volume before PlayerState flips to Playing and volume is
+    ignored while idle, so sessions started at whatever level the receiver
+    remembered (full-scale input). Verified on VærkstedsTærten: sender 15% ->
+    Opalum 15 at power-on, source Mixer, off 30 s after stop.
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Sun, 18 Oct 2026 14:21:38 +0000
+
+martinmunk-avr-controld (0.5.0) stable; urgency=medium
+
+  * New Opalum backend (backend=opalum) on the opalum-receiver library:
+    power/volume/mute/source + auto_standby (sta0/sta1). Write-only RS232
+    protocol, so state is what the daemon last set -- the daemon must be the
+    port's only owner. Deployed on VærkstedsTærten in place of the ALSA
+    mixer plugin + avr-power hooks (shairport ignore_volume_control=yes,
+    the daemon drives the Opalum from the D-Bus AirPlay volume, ceiling 50).
+  * venv bundles opalum-receiver 0.1.0 from the Forgejo PyPI registry.
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Sun, 18 Oct 2026 14:15:21 +0000
+
+martinmunk-avr-controld (0.4.3) stable; urgency=medium
+
+  * NAD: the receiver's own auto-standby timer was powering it off under a
+    live TV (~30 min of silence) while the power policy thought it was on.
+    Exposed as a switch (Main.AutoStandby) and turned OFF at startup whenever
+    power_policy is on (auto_standby = keep opts out).
+  * NAD: every read is name-checked; unsolicited Variable=Value echoes from
+    remote/front panel (previously flushed, or misread as a query's answer)
+    are drained into push events and logged.
+  * Power policy: tracks the receiver's actual power; an external OFF
+    releases ownership so the next demand edge powers it on again, an
+    external ON is adopted only while a demand is active.
+  * NAD: expose the remaining T757 RS232 variables (tone defeat, speaker
+    trims, subwoofer, tuner, video mode, serial, per-source config, preset
+    names) with HA entity categories; static ones read at announce only.
+  * MQTT bridge: log every incoming command.
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Sun, 18 Oct 2026 14:03:22 +0000
+
+martinmunk-avr-controld (0.4.2) stable; urgency=medium
+
+  * Remove reverse volume sync (receiver -> phone slider). shairport won't relay
+    volume to the AirPlay sender in the NAD-owns-volume setup, so the push was a
+    no-op that only produced misleading "pushed to phone" logs and extra serial
+    polling. Backlogged. Forward (phone -> NAD) and input-stolen handling are
+    unchanged.
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Wed, 16 Sep 2026 13:45:00 +0000
+
+martinmunk-avr-controld (0.4.1) stable; urgency=medium
+
+  * feed_demand: when a source demand clears while the receiver stays on for
+    another demand, restore that demand's input (e.g. stop AirPlay to Main while
+    the TV is on -> switch Main back to the TV input).
+  * Packaging: start/restart the service on install and upgrade (was left stopped
+    after apt upgrade). The unit is gated on ConditionPathExists=the config, so a
+    fresh install without config does not crash-loop.
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Wed, 16 Sep 2026 13:10:00 +0000
+
+martinmunk-avr-controld (0.4.0) stable; urgency=medium
+
+  * First release of the Python avr-controld: a broker daemon that owns each AV
+    receiver connection and serves the ALSA plugins and avr-cec-relay over the
+    same Unix-socket protocol as the C++ daemon, plus a Home Assistant MQTT
+    bridge. Shipped as a bundled virtualenv (arch: all; pure-Python deps).
+  * NAD backend (RS232, T7xx) exposing power/volume/mute/source plus extras
+    (bass/treble, Zone 2 power/volume/mute/source, sleep, tone, model/firmware).
+  * Multi-zone AirPlay: one shairport-sync watcher per zone over per-zone D-Bus
+    (zones= config), each mapped to a receiver zone (Main core, or Zone 2 via
+    extras). Phone slider -> zone volume (clamped to a per-zone ceiling) and
+    reverse (receiver remote/front panel -> phone slider via SetAirplayVolume).
+  * Power policy per demand (AirPlay playing, CEC/TV active) with off-grace;
+    per-zone power grace; drop the AirPlay session when the receiver input is
+    switched away from a zone. Demands act on activation edges so a client may
+    re-assert them (survives a daemon restart).
+  * Serial access is finely locked so a long state sweep never blocks interactive
+    commands (CEC/phone volume); volume-signal bursts are coalesced.
+  * Offline unit tests (no hardware/MQTT/serial) run hermetically in CI.
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Wed, 16 Sep 2026 11:35:00 +0000

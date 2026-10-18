@@ -160,7 +160,7 @@ fi
 echo -e "${YELLOW}Ready to push release:${NC}"
 echo -e "  • Changelog commit"
 echo -e "  • Tag: ${TAG_NAME}"
-echo -e "  • This will trigger Gitea Actions to build and publish"
+echo -e "  • This will trigger Forgejo Actions to build and publish"
 echo ""
 
 if [ "$NON_INTERACTIVE" = false ]; then
@@ -176,9 +176,9 @@ if [ "$NON_INTERACTIVE" = false ]; then
     fi
 fi
 
-# Push to Gitea
+# Push to Forgejo
 echo ""
-echo -e "${GREEN}Pushing to Gitea...${NC}"
+echo -e "${GREEN}Pushing to Forgejo...${NC}"
 git push origin "$CURRENT_BRANCH"
 git push origin "$TAG_NAME"
 
@@ -187,9 +187,9 @@ echo -e "${GREEN}================================${NC}"
 echo -e "${GREEN}Release ${NEW_VERSION} created!${NC}"
 echo -e "${GREEN}================================${NC}"
 echo ""
-echo "Gitea Actions will now:"
+echo "Forgejo Actions will now:"
 echo "  • Build packages for AMD64 and ARM64"
-echo "  • Publish to Gitea Debian repository"
+echo "  • Publish to Forgejo Debian repository"
 echo ""
 echo "Monitor the build at:"
 REPO_URL=$(git config --get remote.origin.url | sed 's/\.git$//' | sed 's|^git@\(.*\):|http://\1/|')
