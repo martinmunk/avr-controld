@@ -1,197 +1,152 @@
 #!/bin/bash
 #
-# Copyright (c) 2025 Martin Munk Hansen
+# Cut a release of ONE of the two Debian source packages in this repo:
 #
-# Script to create a new release
+#   alsa-control-avr   (root debian/)    C++ ALSA plugins, avr-cec-relay, avr-power
+#   avr-controld       (python/debian/)  Python broker daemon (venv package)
+#
+# They version independently. Each has its own tag namespace, and CI
+# (.forgejo/workflows/publish.yml) builds and publishes only the package named
+# in the tag:
+#
+#   martinmunk-alsa-control-avr/release/X.Y.Z
+#   martinmunk-avr-controld/release/X.Y.Z
 #
 # Usage:
-#   ./create-release.sh              # Interactive mode (default)
-#   ./create-release.sh 1.2.3        # Interactive with version specified
-#   ./create-release.sh -y 1.2.3     # Non-interactive mode
+#   ./create-release.sh <package> <version>          # interactive (default)
+#   ./create-release.sh -y <package> <version>       # non-interactive
+#   ./create-release.sh -n <package> <version>       # dry run: print, change nothing
+#
+# The changelog entry is generated from the commits touching that package's
+# paths since its previous release tag, then opened in $EDITOR for review
+# (unless -y). Identity comes from git (user.name / user.email).
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
-# Parse command line arguments
 NON_INTERACTIVE=false
+DRY_RUN=false
+PKG=""
 NEW_VERSION=""
+
+usage() {
+    sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+    exit "${1:-0}"
+}
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        -y|--yes|--non-interactive)
-            NON_INTERACTIVE=true
-            shift
-            ;;
-        -h|--help)
-            echo "Usage: $0 [-y|--non-interactive] [version]"
-            echo ""
-            echo "Options:"
-            echo "  -y, --yes, --non-interactive    Skip all prompts"
-            echo "  -h, --help                      Show this help"
-            echo ""
-            echo "Examples:"
-            echo "  $0                              Interactive mode"
-            echo "  $0 1.2.3                        Interactive with version"
-            echo "  $0 -y 1.2.3                     Non-interactive"
-            exit 0
-            ;;
-        *)
-            NEW_VERSION="$1"
-            shift
-            ;;
+        -y|--yes|--non-interactive) NON_INTERACTIVE=true; shift ;;
+        -n|--dry-run) DRY_RUN=true; shift ;;
+        -h|--help) usage 0 ;;
+        -*) echo -e "${RED}Unknown option: $1${NC}"; usage 1 ;;
+        *) if [ -z "$PKG" ]; then PKG="$1"; elif [ -z "$NEW_VERSION" ]; then NEW_VERSION="$1";
+           else echo -e "${RED}Too many arguments${NC}"; usage 1; fi; shift ;;
     esac
 done
 
-# Get current version from changelog
-CURRENT_VERSION=$(dpkg-parsechangelog -S Version)
-PACKAGE_NAME=$(dpkg-parsechangelog -S Source)
+case "$PKG" in
+    alsa-control-avr|martinmunk-alsa-control-avr)
+        PKG_DIR="."; PATHS="src include CMakeLists.txt debian systemd examples tests buildpackage.sh" ;;
+    avr-controld|martinmunk-avr-controld)
+        PKG_DIR="python"; PATHS="python" ;;
+    "") echo -e "${RED}Missing <package> (alsa-control-avr | avr-controld)${NC}"; usage 1 ;;
+    *)  echo -e "${RED}Unknown package: $PKG${NC}"; usage 1 ;;
+esac
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+CHANGELOG="$PKG_DIR/debian/changelog"
+SOURCE=$(dpkg-parsechangelog -l "$CHANGELOG" -S Source)
+CURRENT_VERSION=$(dpkg-parsechangelog -l "$CHANGELOG" -S Version)
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+TAG_PREFIX="$SOURCE/release/"
+# The previous release of this package: newest (by tag date) of its own namespace
+# and the legacy shared release/X.Y.Z tags used between 0.2.x and 0.5.1. (The
+# repo started with per-package tags, so the namespace alone would pick 0.1.1.)
+LAST_TAG=$(git for-each-ref --sort=-creatordate --format='%(refname:short)' \
+           "refs/tags/${TAG_PREFIX}" "refs/tags/release/" | head -1)
+
+export DEBFULLNAME=$(git config user.name)
+export DEBEMAIL=$(git config user.email)
+if [ -z "$DEBEMAIL" ]; then
+    echo -e "${RED}git user.email is not set; refusing to write a changelog entry${NC}"; exit 1
+fi
 
 echo -e "${BLUE}================================${NC}"
-echo -e "${BLUE}Create Release for ${PACKAGE_NAME}${NC}"
+echo -e "${BLUE}Create release: ${SOURCE}${NC}"
 echo -e "${BLUE}================================${NC}"
-echo ""
-echo -e "Current version: ${GREEN}${CURRENT_VERSION}${NC}"
-echo -e "Branch: ${CURRENT_BRANCH}"
+echo -e "Current version: ${GREEN}${CURRENT_VERSION}${NC}   last tag: ${LAST_TAG:-none}"
+echo -e "Branch:          ${CURRENT_BRANCH}"
+echo -e "Identity:        ${DEBFULLNAME} <${DEBEMAIL}>"
 echo ""
 
-# Check for uncommitted changes
 if ! git diff-index --quiet HEAD -- 2>/dev/null; then
-    echo -e "${YELLOW}WARNING: You have uncommitted changes:${NC}"
-    git status --short
-    echo ""
-    if [ "$NON_INTERACTIVE" = false ]; then
-        read -p "Continue anyway? (y/N) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo "Aborted."
-            exit 1
-        fi
-        echo ""
+    echo -e "${YELLOW}WARNING: uncommitted changes:${NC}"; git status --short; echo ""
+    if [ "$NON_INTERACTIVE" = false ] && [ "$DRY_RUN" = false ]; then
+        read -p "Continue anyway? (y/N) " -n 1 -r; echo
+        [[ $REPLY =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
     fi
 fi
 
-# Prompt for version if not provided
-if [ -z "$NEW_VERSION" ]; then
-    while true; do
-        read -p "Enter new version (X.Y.Z format): " NEW_VERSION
-
-        # Validate version format
-        if [[ ! $NEW_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo -e "${RED}Error: Version must be in format X.Y.Z (e.g., 1.2.3)${NC}"
-            continue
-        fi
-
-        # Check if version is newer
-        if dpkg --compare-versions "$NEW_VERSION" le "$CURRENT_VERSION"; then
-            echo -e "${RED}Error: New version ($NEW_VERSION) must be greater than current ($CURRENT_VERSION)${NC}"
-            continue
-        fi
-
-        break
-    done
-    echo ""
-else
-    # Validate provided version
+while true; do
+    if [ -z "$NEW_VERSION" ]; then
+        [ "$NON_INTERACTIVE" = true ] && { echo -e "${RED}Missing <version>${NC}"; exit 1; }
+        read -p "New version (X.Y.Z): " NEW_VERSION
+    fi
     if [[ ! $NEW_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo -e "${RED}Error: Version must be in format X.Y.Z (e.g., 1.2.3)${NC}"
-        exit 1
+        echo -e "${RED}Version must be X.Y.Z${NC}"; NEW_VERSION=""; [ "$NON_INTERACTIVE" = true ] && exit 1; continue
     fi
-
     if dpkg --compare-versions "$NEW_VERSION" le "$CURRENT_VERSION"; then
-        echo -e "${RED}Error: New version ($NEW_VERSION) must be greater than current ($CURRENT_VERSION)${NC}"
-        exit 1
+        echo -e "${RED}$NEW_VERSION is not greater than $CURRENT_VERSION${NC}"; NEW_VERSION=""; [ "$NON_INTERACTIVE" = true ] && exit 1; continue
     fi
+    break
+done
+TAG_NAME="${TAG_PREFIX}${NEW_VERSION}"
+if git rev-parse -q --verify "refs/tags/$TAG_NAME" >/dev/null; then
+    echo -e "${RED}Tag $TAG_NAME already exists${NC}"; exit 1
 fi
 
-# Show what will happen
-TAG_NAME="release/${NEW_VERSION}"
-echo -e "${YELLOW}Release Summary:${NC}"
-echo -e "  Package:    ${PACKAGE_NAME}"
-echo -e "  Version:    ${GREEN}${CURRENT_VERSION}${NC} → ${GREEN}${NEW_VERSION}${NC}"
-echo -e "  Tag:        ${TAG_NAME}"
-echo -e "  Branch:     ${CURRENT_BRANCH}"
+# Changelog body: one line per commit touching this package since its last tag.
+RANGE=""; [ -n "$LAST_TAG" ] && RANGE="${LAST_TAG}..HEAD"
+# shellcheck disable=SC2086
+mapfile -t ENTRIES < <(git log --no-merges --format='%s' $RANGE -- $PATHS | grep -v -i '^release:\|^Update changelog for' || true)
+[ ${#ENTRIES[@]} -eq 0 ] && ENTRIES=("Release $NEW_VERSION")
+
+echo -e "${YELLOW}Release summary:${NC}"
+echo -e "  Package:  ${SOURCE}  (${PKG_DIR}/debian)"
+echo -e "  Version:  ${GREEN}${CURRENT_VERSION}${NC} -> ${GREEN}${NEW_VERSION}${NC}"
+echo -e "  Tag:      ${TAG_NAME}"
+echo -e "  Changes since ${LAST_TAG:-the beginning} (${#ENTRIES[@]}):"
+for e in "${ENTRIES[@]}"; do echo "    * $e"; done
 echo ""
+if [ "$DRY_RUN" = true ]; then echo -e "${YELLOW}Dry run: nothing changed.${NC}"; exit 0; fi
 
-# Generate changelog from git history
-echo -e "${GREEN}Generating changelog from git history...${NC}"
-if [ "$NON_INTERACTIVE" = true ]; then
-    gbp dch --new-version="$NEW_VERSION" --release --commit --spawn-editor=never
-else
-    echo -e "${YELLOW}Your editor will open to review and edit the changelog.${NC}"
-    echo -e "${YELLOW}Save and close the editor when done.${NC}"
-    echo ""
-    read -p "Press Enter to open editor..."
-    gbp dch --new-version="$NEW_VERSION" --release --commit --spawn-editor=always
-fi
-
-echo -e "${GREEN}✓${NC} Changelog updated"
-echo ""
-
-# Create git tag
-echo -e "${GREEN}Creating git tag: ${TAG_NAME}${NC}"
-git tag -a "$TAG_NAME" -m "Release ${PACKAGE_NAME} ${NEW_VERSION}"
-echo -e "${GREEN}✓${NC} Tag created"
-echo ""
-
-# Build the package (optional)
+echo -e "${GREEN}Writing changelog entry...${NC}"
+dch --changelog "$CHANGELOG" --newversion "$NEW_VERSION" --distribution stable --urgency medium \
+    --force-distribution "${ENTRIES[0]}"
+for e in "${ENTRIES[@]:1}"; do dch --changelog "$CHANGELOG" --append "$e"; done
 if [ "$NON_INTERACTIVE" = false ]; then
-    read -p "Build package locally to verify? (Y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-        echo -e "${GREEN}Building package...${NC}"
-        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        "$SCRIPT_DIR/buildpackage.sh"
-
-        echo ""
-        echo -e "${GREEN}Build complete!${NC}"
-        ls -lh build-deb/*.deb 2>/dev/null || echo "No .deb files found"
-        echo ""
-    fi
+    echo -e "${YELLOW}Review/edit the entry; save and close to continue.${NC}"
+    "${EDITOR:-vi}" "$CHANGELOG"
 fi
-
-# Final confirmation before push
-echo -e "${YELLOW}Ready to push release:${NC}"
-echo -e "  • Changelog commit"
-echo -e "  • Tag: ${TAG_NAME}"
-echo -e "  • This will trigger Gitea Actions to build and publish"
+git add "$CHANGELOG"
+git commit -q -m "release: ${SOURCE} ${NEW_VERSION}"
+git tag -a "$TAG_NAME" -m "Release ${SOURCE} ${NEW_VERSION}"
+echo -e "${GREEN}✓${NC} changelog committed, tag ${TAG_NAME} created"
 echo ""
 
 if [ "$NON_INTERACTIVE" = false ]; then
-    read -p "Push to remote? (y/N) " -n 1 -r
-    echo
+    read -p "Push branch + tag to Forgejo (triggers build + publish)? (y/N) " -n 1 -r; echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo ""
-        echo -e "${YELLOW}Release prepared locally but not pushed.${NC}"
-        echo "To push later, run:"
-        echo "  git push origin ${CURRENT_BRANCH}"
-        echo "  git push origin ${TAG_NAME}"
+        echo -e "${YELLOW}Prepared locally, not pushed. Later:${NC}"
+        echo "  git push origin ${CURRENT_BRANCH} && git push origin ${TAG_NAME}"
         exit 0
     fi
 fi
-
-# Push to Gitea
-echo ""
-echo -e "${GREEN}Pushing to Gitea...${NC}"
 git push origin "$CURRENT_BRANCH"
 git push origin "$TAG_NAME"
-
 echo ""
-echo -e "${GREEN}================================${NC}"
-echo -e "${GREEN}Release ${NEW_VERSION} created!${NC}"
-echo -e "${GREEN}================================${NC}"
-echo ""
-echo "Gitea Actions will now:"
-echo "  • Build packages for AMD64 and ARM64"
-echo "  • Publish to Gitea Debian repository"
-echo ""
-echo "Monitor the build at:"
-REPO_URL=$(git config --get remote.origin.url | sed 's/\.git$//' | sed 's|^git@\(.*\):|http://\1/|')
+echo -e "${GREEN}Release ${SOURCE} ${NEW_VERSION} pushed.${NC} CI builds and publishes it to the Forgejo apt registry."
+REPO_URL=$(git config --get remote.origin.url | sed 's/\.git$//' | sed 's|^git@\(.*\):|http://\1/|' | sed 's|^ssh://git@\([^/]*\)/|http://\1:3000/|')
 echo -e "  ${BLUE}${REPO_URL}/actions${NC}"
-echo ""

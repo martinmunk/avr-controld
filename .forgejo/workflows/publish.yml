@@ -1,9 +1,15 @@
 name: Build and Publish Debian Package
 
+# Two independently versioned source packages live here. Each has its own tag
+# namespace and only the package named in the tag is built and published:
+#   martinmunk-alsa-control-avr/release/X.Y.Z  -> build-and-publish (C++, amd64+arm64)
+#   martinmunk-avr-controld/release/X.Y.Z      -> publish-python (venv, arch all)
+# Cut them with ./create-release.sh <package> <version>.
 on:
   push:
     tags:
-      - 'release/*'
+      - 'martinmunk-alsa-control-avr/release/*'
+      - 'martinmunk-avr-controld/release/*'
   workflow_dispatch:
 
 env:
@@ -16,6 +22,7 @@ jobs:
   # entirely and curl the freshly-built .deb straight to the registry.
   build-and-publish:
     name: Build & Publish (${{ matrix.arch }})
+    if: startsWith(github.ref, 'refs/tags/martinmunk-alsa-control-avr/release/') || github.event_name == 'workflow_dispatch'
     runs-on: docker
     strategy:
       fail-fast: false
@@ -64,6 +71,14 @@ jobs:
         run: |
           apt-get install -y -qq libasound2-dev libsystemd-dev
 
+      - name: Tag version must match debian/changelog
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          tagver="${GITHUB_REF#refs/tags/martinmunk-alsa-control-avr/release/}"
+          chver=$(dpkg-parsechangelog -S Version)
+          echo "tag $tagver / changelog $chver"
+          [ "$tagver" = "$chver" ] || { echo "tag/changelog version mismatch"; exit 1; }
+
       - name: Build package (buildpackage.sh stamps +debian<N><codename>)
         run: |
           if [ "${{ matrix.arch }}" != "$(dpkg --print-architecture)" ]; then
@@ -105,6 +120,7 @@ jobs:
 
   publish-python:
     name: Build & Publish venv package (arch all)
+    if: startsWith(github.ref, 'refs/tags/martinmunk-avr-controld/release/') || github.event_name == 'workflow_dispatch'
     runs-on: docker
     container:
       image: debian:trixie
@@ -123,6 +139,14 @@ jobs:
 
       - name: Install packaging deps
         run: apt-get install -y -qq debhelper python3 python3-venv python3-pip dpkg-dev fakeroot
+
+      - name: Tag version must match python/debian/changelog
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          tagver="${GITHUB_REF#refs/tags/martinmunk-avr-controld/release/}"
+          chver=$(dpkg-parsechangelog -l python/debian/changelog -S Version)
+          echo "tag $tagver / changelog $chver"
+          [ "$tagver" = "$chver" ] || { echo "tag/changelog version mismatch"; exit 1; }
 
       - name: Build venv package
         run: |
