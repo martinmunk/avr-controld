@@ -29,8 +29,9 @@ relay, two AirPlay zones) and **VærkstedsTærten** (192.168.20.217, Opalum).
   `dpkg-buildpackage -b --no-sign -rfakeroot` in a Debian trixie container (the venv
   build needs LAN access to the Forgejo PyPI index for `opalum-receiver`), `dpkg -i` on
   the Pi, then `git checkout -- debian/changelog`. Everything on a Pi must be dpkg-tracked.
-- **Releases go out only via `./create-release.sh`** (writes the changelog from git,
-  tags `release/X.Y.Z`, pushes), which CI (`.forgejo/workflows/publish.yml`) builds and
+- **Releases are cut on `main` only, never from a branch**, and only via
+  `./create-release.sh` (writes the changelog from git, tags `release/X.Y.Z`, pushes),
+  which CI (`.forgejo/workflows/publish.yml`) builds and
   publishes to the Forgejo apt registry. Never curl-upload a package by hand. Never
   hand-edit the changelog for a release or set DEBEMAIL; identity comes from git config.
 - CI runs on Forgejo (`.forgejo/`), `runs-on: docker`, Debian trixie. The package is
