@@ -201,8 +201,8 @@ class ShairportWatcher(threading.Thread):
                     for m in batch:
                         touched |= self.state.apply_changed(m.body[0], m.body[1])
                     if "playing" in touched:
-                        self._emit_playing()
-                    if "volume" in touched and self.on_volume and self.state.volume_db is not None:
+                        self._emit_playing()          # re-applies volume on a play edge
+                    elif "volume" in touched and self.on_volume and self.state.volume_db is not None:
                         self.on_volume(self.state.volume_db)
                     if touched and self.on_change:
                         self.on_change()
@@ -215,6 +215,15 @@ class ShairportWatcher(threading.Thread):
     def _emit_playing(self, initial: bool = False) -> None:
         if self.on_playing:
             self.on_playing(self.state.playing())
+        # A sender sets its volume BEFORE it starts playing, and the volume
+        # handlers ignore volume while idle (an idle instance must never move
+        # the receiver). So replay the last known volume on the play edge: the
+        # slider level lands on the receiver right at power-on instead of the
+        # receiver playing full-scale input at whatever level it remembered.
+        # (Seen live: the Opalum stayed at its primed 20 while the sender sat
+        # at 15% -> -24 dB, because the volume arrived before PlayerState.)
+        if self.state.playing() and self.on_volume and self.state.volume_db is not None:
+            self.on_volume(self.state.volume_db)
 
     # ---- write path (drop the AirPlay session on input steal) -----------
     def drop_session(self) -> bool:

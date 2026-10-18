@@ -63,3 +63,32 @@ def test_plain_values_without_variant_wrapper():
     s = ShairportState()
     s.apply_changed(IFACE_REMOTE, {"PlayerState": "Playing"})
     assert s.playing()
+
+
+# ---- the watcher's play edge replays the last known volume ------------------
+def _watcher(calls):
+    from avrcontrold.shairport import ShairportWatcher
+    w = ShairportWatcher(on_playing=lambda p: calls.append(("playing", p)),
+                         on_volume=lambda db: calls.append(("volume", db)))
+    return w
+
+
+def test_volume_known_before_play_is_applied_on_play_edge():
+    calls = []
+    w = _watcher(calls)
+    w.state.apply_changed(IFACE_REMOTE, {"AirplayVolume": ("d", -24.0)})
+    w.state.apply_changed(IFACE_REMOTE, {"PlayerState": ("s", "Playing")})
+    w._emit_playing()
+    assert calls == [("playing", True), ("volume", -24.0)]
+
+
+def test_no_volume_replay_when_stopping_or_unknown():
+    calls = []
+    w = _watcher(calls)
+    w.state.apply_changed(IFACE_REMOTE, {"PlayerState": ("s", "Playing")})
+    w._emit_playing()                       # volume never reported
+    assert calls == [("playing", True)]
+    w.state.apply_changed(IFACE_REMOTE, {"AirplayVolume": ("d", -10.0)})
+    w.state.apply_changed(IFACE_REMOTE, {"PlayerState": ("s", "Stopped")})
+    w._emit_playing()
+    assert calls[-1] == ("playing", False)   # no volume on the stop edge
