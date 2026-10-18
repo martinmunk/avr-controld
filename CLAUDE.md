@@ -29,14 +29,8 @@ Tærten AirPlay Pis: **StueTærten** (192.168.20.240, Denon AVR-X1100W at .216) 
   installed on a Pi must be tracked by dpkg — no hand-compiled or hand-copied binaries.
 - Development/test builds use a `~devN` version: `dch -b -v 0.3.1~devN ...`, build,
   then `git checkout -- debian/changelog` to restore. (Watch for interactive `cp`.)
-- **Releases go out only via a release tag**, which CI (`.forgejo/workflows/publish.yml`)
-  builds and publishes. Never curl-upload a package to the registry by hand. The two
-  source packages version independently and each has its own tag namespace:
-  `martinmunk-alsa-control-avr/release/X.Y.Z` (C++, root `debian/`) and
-  `martinmunk-avr-controld/release/X.Y.Z` (Python daemon, `python/debian/`). Cut one with
-  `./create-release.sh <alsa-control-avr|avr-controld> X.Y.Z` (`-n` dry run, `-y`
-  non-interactive); it writes the changelog from the package's commits, tags and pushes.
-  Do not hand-edit changelogs or set DEBEMAIL; identity comes from git config.
+- **Releases go out only via `git tag release/X.Y.Z`**, which CI (`.forgejo/workflows/publish.yml`)
+  builds and publishes. Never curl-upload a package to the registry by hand.
 - CI runs on Forgejo (`.forgejo/`), `runs-on: docker`, Debian trixie, amd64 + arm64.
 
 ## Hardware safety — read this before anything that changes volume/power
