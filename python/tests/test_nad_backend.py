@@ -5,24 +5,63 @@ import pytest
 from avrcontrold.backends.nad import NADBackend
 
 
+class _FakeSerial:
+    """Minimal pyserial stand-in: queued unsolicited lines."""
+    def __init__(self):
+        self.buf = b""
+    def push(self, line: str):
+        self.buf += line.encode() + b"\r"
+    @property
+    def in_waiting(self):
+        return len(self.buf)
+    def read_until(self, term=b"\r"):
+        i = self.buf.index(term) + 1
+        out, self.buf = self.buf[:i], self.buf[i:]
+        return out
+
+
 class _FakeTransport:
+    """Serves Variable?/Variable=Value over the fake's state, like the NAD."""
+    _CORE = {"Main.Power": "power", "Main.Mute": "mute", "Main.Source": "source"}
+
     def __init__(self, nad):
         self.nad = nad
+        self.ser = _FakeSerial()
+        self.mismatch_once = None   # reply with this line instead, once
+        self.sent = []
+
     def communicate(self, cmd):
         self.nad._maybe_raise()
+        self.sent.append(cmd)
+        self.ser.buf = b""          # like SerialPortTransport.reset_input_buffer
+        if self.mismatch_once:
+            r, self.mismatch_once = self.mismatch_once, None
+            return r
         if cmd.endswith("?"):
             var = cmd[:-1]
+            if var == "Main.Volume":
+                return f"Main.Volume={self.nad.db:.0f}"
+            if var in self._CORE:
+                return f"{var}={getattr(self.nad, self._CORE[var])}"
             return f"{var}={self.nad.vars.get(var, '')}" if var in self.nad.vars else ""
+        if cmd in ("Main.Volume+", "Main.Volume-"):
+            self.nad.db += 1 if cmd[-1] == "+" else -1
+            return f"Main.Volume={self.nad.db:.0f}"
         if "=" in cmd:
             var, val = cmd.split("=", 1)
-            self.nad.vars[var] = val
+            if var == "Main.Volume":
+                self.nad.db = float(val)
+            elif var in self._CORE:
+                setattr(self.nad, self._CORE[var], val)
+            else:
+                self.nad.vars[var] = val
             return cmd
         return ""
 
 
 class FakeNad:
     """Mimics nad_receiver.NADReceiver operator semantics in memory."""
-    def __init__(self, db=-40.0, power="On", mute="Off", source="Source 1"):
+    def __init__(self, db=-40.0, power="On", mute="Off", source="1"):
         self.db = db
         self.power = power
         self.mute = mute
@@ -30,7 +69,9 @@ class FakeNad:
         self.raise_next = False
         self.vars = {"Main.Bass": "-2", "Main.Treble": "0", "Main.Model": "T757",
                      "Zone2.Power": "Off", "Zone2.Volume": "-20", "Main.Sleep": "0",
-                     "Main.ListeningMode": "None"}
+                     "Main.ListeningMode": "None", "Main.ToneDefeat": "Off",
+                     "Main.Trim.Sub": "0", "Tuner.FM.Frequency": "87.50",
+                     "Source1.Enabled": "Yes", "Source1.AnalogGain": "0"}
         self.transport = _FakeTransport(self)
 
     def _maybe_raise(self):
@@ -241,3 +282,68 @@ def test_zone2_volume_is_percent_like_main():
     assert be.set_extra("zone2_volume", 50)            # 50% -> -40 dB
     assert rx.vars["Zone2.Volume"] == "-40"
     assert be.get_extra("zone2_volume") == 50
+
+
+# ---- the unsolicited-echo problem -----------------------------------------
+def test_mismatched_reply_is_not_taken_as_answer_but_kept_as_event():
+    # Live case: the user pressed power mid-query; "Main.Monitor.Out?" was
+    # answered "Main.Power=On". The read must be void and the echo surfaced.
+    rx, be = make(power="Off")
+    rx.transport.mismatch_once = "Main.Power=On"
+    assert be.get_volume() is None                 # void, not "On" parsed as volume
+    ev = be.poll_events()
+    assert ev.power is True
+    assert be.poll_events().empty()                # consumed
+
+
+def test_drains_unsolicited_lines_from_serial():
+    rx, be = make()
+    rx.transport.ser.push("Main.Power=Off")
+    rx.transport.ser.push("Main.Volume=-20")
+    rx.transport.ser.push("Zone2.Power=On")
+    ev = be.poll_events()
+    assert ev.power is False
+    assert ev.volume == 75                          # -20 dB over -80..0
+    assert ev.other == {"Zone2.Power": "On"}
+    assert "power=OFF" in ev.describe() and "Zone2.Power=On" in ev.describe()
+    assert be.poll_events().empty()
+
+
+def test_core_reads_via_name_checked_query():
+    rx, be = make(power="On", mute="Off", db=-40.0)
+    assert be.get_power() is True
+    assert be.get_mute() is False
+    assert be.get_volume() == 50
+    assert be.volume_up() and be.get_volume() == 51
+    assert be.set_power(False) and rx.power == "Off"
+
+
+def test_new_extras_types_and_categories():
+    rx, be = make()
+    specs = {e.key: e for e in be.extras()}
+    assert specs["tone_defeat"].component == "switch"
+    assert specs["serial"].static and specs["serial"].category == "diagnostic"
+    assert specs["auto_standby"].category == "config"
+    assert be.get_extra("tone_defeat") is False
+    assert be.set_extra("tone_defeat", True) and rx.vars["Main.ToneDefeat"] == "On"
+    assert be.get_extra("fm_frequency") == 87.5                      # float
+    assert be.set_extra("fm_frequency", 101.3)
+    assert rx.vars["Tuner.FM.Frequency"] == "101.30"
+    assert be.set_extra("trim_sub", -3) and be.get_extra("trim_sub") == -3
+
+
+def test_per_source_config_extras_discovered():
+    rx = FakeNad()
+    rx.vars.update({"Source1.Name": "TV", "Source2.Name": "AirPlay",
+                    "Source2.Enabled": "No", "Preset1.Name": "Movie"})
+    be = NADBackend("/dev/ttyUSB0", receiver=rx)
+    assert be.connect()
+    assert be.get_inputs() == ["TV"]                # Source2 disabled
+    keys = {e.key for e in be.extras()}
+    assert {"source1_enabled", "source1_analog_gain", "source2_enabled",
+            "preset1_name"} <= keys
+    spec = {e.key: e for e in be.extras()}["source2_enabled"]
+    assert spec.name == "AirPlay: Enabled" and spec.static and spec.category == "config"
+    assert be.get_extra("source2_enabled") is False                  # "No"
+    assert be.set_extra("source2_enabled", True) and rx.vars["Source2.Enabled"] == "Yes"
+    assert be.get_extra("preset1_name") == "Movie"

@@ -151,3 +151,44 @@ def test_extra_sensor_is_read_only():
     br.announce()
     assert not any(t.endswith("/model/set") for t in cl.subscriptions)
     assert any(t.endswith("/bass/set") for t in cl.subscriptions)   # number is writable
+
+
+def test_static_extra_read_at_announce_and_after_write_only():
+    from avrcontrold.backends.base import ExtraSpec
+
+    class StaticBackend(FakeBackend):
+        def __init__(self):
+            super().__init__()
+            self.reads = 0
+            self.serial = "K25"
+
+        def extras(self):
+            return super().extras() + [
+                ExtraSpec("serial", "sensor", "Serial", static=True, category="diagnostic"),
+                ExtraSpec("gain", "number", "Gain", writable=True, min=0, max=9, static=True)]
+
+        def get_extra(self, key):
+            if key == "serial":
+                self.reads += 1
+                return self.serial
+            if key == "gain":
+                self.reads += 1
+                return 1
+            return super().get_extra(key)
+
+        def set_extra(self, key, value):
+            if key == "gain":
+                return True
+            return super().set_extra(key, value)
+
+    be = StaticBackend()
+    client = FakeClient()
+    br = MqttBridge(E.Device(node_id="n", name="N"), be, client)
+    br.announce()
+    assert be.reads == 2                        # both read once at announce
+    cfg = [json.loads(p) for t, p, r in client.published if t.endswith("/serial/config")][0]
+    assert cfg["entity_category"] == "diagnostic"
+    br.publish_state(); br.publish_state()
+    assert be.reads == 2                        # not on the periodic sweep
+    br.handle_message("avrcontrold/n/gain/set", "4")
+    assert be.reads == 3                        # re-read after a write (gain only)

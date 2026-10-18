@@ -130,6 +130,8 @@ def build_extra_entities(device: Device, specs) -> list[Entity]:
         cfg["name"] = s.name
         if s.icon:
             cfg["icon"] = s.icon
+        if s.category:
+            cfg["entity_category"] = s.category
         if s.component == "number":
             if s.min is not None:
                 cfg["min"] = s.min

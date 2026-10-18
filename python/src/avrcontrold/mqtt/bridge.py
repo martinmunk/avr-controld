@@ -63,6 +63,10 @@ class MqttBridge:
         self._by_cmd = {e.command_topic: e for e in self.entities if e.command_topic}
         self._demand_prefix = E.base_topic(device.node_id) + "/demand/"
         self._last: dict[str, str] = {}
+        # Static extras (device config/identity) are read at announce and after
+        # a write to them, never on the periodic sweep: each is a serial
+        # round-trip and they don't change on their own.
+        self._dirty: set[str] = set()
 
     # ---- lifecycle ------------------------------------------------------
     def announce(self) -> None:
@@ -86,8 +90,12 @@ class MqttBridge:
         for e in self.entities:
             # Take the serial lock only around the read, then release it before
             # the next entity, so interactive socket commands can interleave.
+            spec = self._extra_specs.get(e.key)
+            if spec is not None and spec.static and not force and e.key not in self._dirty:
+                continue
+            self._dirty.discard(e.key)
             with self._lock:
-                if e.key in self._extra_specs:
+                if spec is not None:
                     payload = E.encode_extra(e.component, self.backend.get_extra(e.key))
                 else:
                     payload = E.encode_state(e.key, _read(self.backend, e.key))
@@ -115,13 +123,16 @@ class MqttBridge:
             except ValueError as exc:
                 log.warning("bad extra command on %s: %s", topic, exc)
                 return
+            log.info("mqtt command: %s = %s", ent.key, value)
             self.backend.set_extra(ent.key, value)
+            self._dirty.add(ent.key)
         else:
             try:
                 value = E.decode_command(ent.key, payload)
             except ValueError as exc:
                 log.warning("bad command on %s: %s", topic, exc)
                 return
+            log.info("mqtt command: %s = %s", ent.key, value)
             self._apply(ent.key, value)
         # Reflect the resulting state promptly.
         self.publish_state()

@@ -44,6 +44,9 @@ class ExtraSpec:
     options: list[str] | None = None   # select
     mode: str = "box"                  # number display: "box" | "slider" | "auto"
     icon: str | None = None
+    category: str | None = None        # HA entity_category: "config" | "diagnostic"
+    static: bool = False               # device config/identity: read at announce
+                                       # and after a write, not on every poll
 
 
 @dataclass
@@ -56,10 +59,24 @@ class PushEvent:
     mute: bool | None = None
     power: bool | None = None
     input: str | None = None
+    other: dict = field(default_factory=dict)   # receiver-specific Variable=Value
 
     def empty(self) -> bool:
         return (self.volume is None and self.mute is None
-                and self.power is None and self.input is None)
+                and self.power is None and self.input is None and not self.other)
+
+    def describe(self) -> str:
+        parts = []
+        if self.power is not None:
+            parts.append("power=" + ("ON" if self.power else "OFF"))
+        if self.volume is not None:
+            parts.append(f"volume={self.volume}")
+        if self.mute is not None:
+            parts.append("mute=" + ("ON" if self.mute else "OFF"))
+        if self.input is not None:
+            parts.append(f"input={self.input}")
+        parts += [f"{k}={v}" for k, v in self.other.items()]
+        return " ".join(parts)
 
 
 class Backend(ABC):

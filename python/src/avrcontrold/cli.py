@@ -375,10 +375,24 @@ def main(argv: list[str] | None = None) -> int:
                     backend.connect()
                 ev = backend.poll_events()
                 if not ev.empty():
-                    log.debug("push event: %s", ev)
-                if policy is not None and policy.tick(time.monotonic()) is False:
-                    backend.set_power(False)
-                    log.info("power: OFF (no demand, grace elapsed)")
+                    log.info("receiver reported: %s", ev.describe())
+                if policy is not None:
+                    # The receiver can change power on its own (remote, front
+                    # panel, its own timer); keep the policy's idea of ownership
+                    # in step so a later demand edge still powers it on.
+                    actual = ev.power if ev.power is not None else backend.get_power()
+                    seen = policy.observe_power(actual)
+                    if seen == "external_off":
+                        log.warning("power: receiver went OFF on its own (not commanded); "
+                                    "demands %s -- will power on again on the next demand",
+                                    sorted(policy.demands()) or "none")
+                    elif seen == "external_on":
+                        log.info("power: receiver turned ON externally%s",
+                                 " (adopted: a demand is active)" if policy.demands() else
+                                 " (not ours; will not power it off)")
+                    if policy.tick(time.monotonic()) is False:
+                        backend.set_power(False)
+                        log.info("power: OFF (no demand, grace elapsed)")
             # Per-zone: flush matured power-off grace, then reverse volume sync
             # (receiver remote/front panel -> phone slider). One lock per zone.
             now = time.monotonic()

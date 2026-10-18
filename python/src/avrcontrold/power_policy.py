@@ -26,6 +26,7 @@ class PowerPolicy:
         self._demands: set[str] = set()
         self._commanded: bool | None = None      # last power we asked for
         self._off_deadline: float | None = None   # when to power off, if pending
+        self._mismatch: int = 0                   # consecutive observed != commanded
 
     # ---- introspection (tests / logging) --------------------------------
     def demands(self) -> set[str]:
@@ -53,6 +54,36 @@ class PowerPolicy:
                 self._commanded = False
                 return False
         return None
+
+    def observe_power(self, actual: bool | None, confirm: int = 2) -> str | None:
+        """Feed the receiver's *actual* power state (polled or pushed). The
+        receiver can change power behind the policy's back: remote, front
+        panel, its own idle timer. Returns "external_off" / "external_on" once
+        such a change is confirmed (`confirm` consecutive observations, so a
+        slow receiver mid-transition isn't misread), else None.
+
+        - OFF while we think it's on: stop owning it. The next demand edge
+          powers it on again; nothing is re-powered behind the user's back.
+        - ON while we think it's off: adopt it if a demand is active (we would
+          have wanted it on anyway, so it is powered off when demands clear);
+          otherwise it is not ours and is never forced off.
+        """
+        if actual is None or actual == self._commanded:
+            self._mismatch = 0
+            return None
+        if self._commanded is None:
+            # Unknown ownership: a receiver on at startup / turned on by hand.
+            return None
+        self._mismatch += 1
+        if self._mismatch < confirm:
+            return None
+        self._mismatch = 0
+        if actual is False:
+            self._commanded = False
+            self._off_deadline = None
+            return "external_off"
+        self._commanded = True if self._demands else None
+        return "external_on"
 
     # ---- core -----------------------------------------------------------
     def _evaluate(self, now_s: float) -> bool | None:
