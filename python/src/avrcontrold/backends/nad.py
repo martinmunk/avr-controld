@@ -66,8 +66,8 @@ _NAD_EXTRAS = [
               max=108.0, step=0.05, unit="MHz", icon="mdi:radio-fm"),
     ExtraSpec("am_frequency", "number", "AM Frequency", writable=True, min=531,
               max=1602, step=9, unit="kHz", icon="mdi:radio-am"),
-    ExtraSpec("tuner_preset", "number", "Tuner Preset", writable=True, min=0, max=40,
-              step=1, icon="mdi:radio"),
+    ExtraSpec("tuner_preset", "number", "Tuner Station Preset", writable=True, min=0,
+              max=40, step=1, icon="mdi:radio"),
     ExtraSpec("fm_mute", "switch", "FM Mute", writable=True, icon="mdi:radio"),
     ExtraSpec("rds_name", "sensor", "RDS Name", icon="mdi:radio"),
     ExtraSpec("rds_text", "sensor", "RDS Text", icon="mdi:radio"),
@@ -196,7 +196,9 @@ class NADBackend(Backend):
             for suffix, var, typ, kw in _SOURCE_FIELDS:
                 key = f"source{n}_{suffix}"
                 kw = dict(kw)
-                kw["name"] = f"{name}: {kw['name']}"
+                # "TV source: Enabled" -- distinct from receiver-wide names such
+                # as "Tuner Station Preset" when a source is itself called Tuner.
+                kw["name"] = f"{name} source: {kw['name']}"
                 self._dyn_specs.append(ExtraSpec(key, writable=True, category="config",
                                                  static=True, **kw))
                 self._dyn_vars[key] = (f"Source{n}.{var}", typ)

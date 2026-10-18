@@ -343,7 +343,7 @@ def test_per_source_config_extras_discovered():
     assert {"source1_enabled", "source1_analog_gain", "source2_enabled",
             "preset1_name"} <= keys
     spec = {e.key: e for e in be.extras()}["source2_enabled"]
-    assert spec.name == "AirPlay: Enabled" and spec.static and spec.category == "config"
+    assert spec.name == "AirPlay source: Enabled" and spec.static and spec.category == "config"
     assert be.get_extra("source2_enabled") is False                  # "No"
     assert be.set_extra("source2_enabled", True) and rx.vars["Source2.Enabled"] == "Yes"
     assert be.get_extra("preset1_name") == "Movie"
