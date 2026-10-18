@@ -1,3 +1,13 @@
+martinmunk-avr-controld (0.5.1) stable; urgency=medium
+
+  * shairport watcher: replay the last known AirPlay volume on the play edge.
+    Senders set their volume before PlayerState flips to Playing and volume is
+    ignored while idle, so sessions started at whatever level the receiver
+    remembered (full-scale input). Verified on VærkstedsTærten: sender 15% ->
+    Opalum 15 at power-on, source Mixer, off 30 s after stop.
+
+ -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Sun, 18 Oct 2026 14:21:38 +0000
+
 martinmunk-avr-controld (0.5.0) stable; urgency=medium
 
   * New Opalum backend (backend=opalum) on the opalum-receiver library:
