@@ -1,3 +1,9 @@
+martinmunk-avr-controld (0.5.3) stable; urgency=medium
+
+  * AirPlay volume: optional shairport "standard" curve + log every applied level
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Sun, 18 Oct 2026 22:18:48 +0000
+
 martinmunk-avr-controld (0.5.2) stable; urgency=medium
 
   * avr-controld is now its own repo (history kept): the C++ socket clients
