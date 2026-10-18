@@ -123,6 +123,31 @@ def parse_zones(cfg: dict) -> list[dict]:
     return zones
 
 
+def own_receiver_power(backend: Backend, cfg: dict) -> bool | None:
+    """When the daemon's power policy owns the receiver's power, the receiver's
+    own idle/auto-standby timer must be off: it powers the unit down behind the
+    policy's back (the NAD T757 did exactly that under a live TV, ~30-45 min
+    after the source went silent) and the policy -- which acts on demand edges
+    only -- never notices. Backend-agnostic: applies to any backend exposing an
+    `auto_standby` extra. `auto_standby = keep` in the config leaves it alone.
+
+    Returns True if it was turned off now, False if already off / left alone,
+    None if the backend has no such setting or the write failed."""
+    if str(cfg.get("auto_standby", "off")).lower() == "keep":
+        return False
+    if "auto_standby" not in {e.key for e in backend.extras()}:
+        return None
+    cur = backend.get_extra("auto_standby")
+    if cur is False:
+        return False
+    if backend.set_extra("auto_standby", False):
+        log.warning("receiver auto-standby was %s -> turned OFF (power policy owns power; "
+                    "set auto_standby = keep to leave it)", "ON" if cur else "unknown")
+        return True
+    log.warning("could not turn off receiver auto-standby; it may power off on its own")
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     cfg = load_config(list(argv) if argv is not None else None)
     logging.basicConfig(
@@ -168,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     airplay_input = cfg.get("airplay_input", "") or cfg.get("input", "")
     if truthy(cfg.get("power_policy", "0")):
         policy = PowerPolicy(off_grace_s=float(cfg.get("off_grace", "120")))
+        own_receiver_power(backend, cfg)
 
     # Track the last-seen active state per demand so we act only on activation
     # *edges*. This lets a client (e.g. the CEC relay) re-assert its demand

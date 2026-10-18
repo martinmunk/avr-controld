@@ -32,6 +32,12 @@ _NAD_EXTRAS = [
     ExtraSpec("zone2_mute", "switch", "Zone 2 Mute", writable=True, icon="mdi:volume-off"),
     ExtraSpec("sleep", "number", "Sleep Timer", writable=True, min=0, max=90, step=15,
               unit="min", icon="mdi:timer"),
+    # The receiver's own idle timer (standby after ~30 min without signal/user
+    # interaction). It silently fights the daemon's power policy -- the NAD went
+    # off under a live TV three times before this was found -- so expose it and
+    # keep it OFF when the daemon owns power (see cli.py).
+    ExtraSpec("auto_standby", "switch", "Auto Standby", writable=True,
+              icon="mdi:timer-off"),
     ExtraSpec("listening_mode", "sensor", "Listening Mode", icon="mdi:surround-sound"),
     ExtraSpec("dimmer", "sensor", "Display Dimmer", icon="mdi:brightness-6"),
     ExtraSpec("model", "sensor", "Model", icon="mdi:information"),
@@ -42,6 +48,7 @@ _NAD_EXTRA_VAR = {
     "bass": ("Main.Bass", "int"), "treble": ("Main.Treble", "int"),
     "zone2_power": ("Zone2.Power", "bool"),
     "zone2_mute": ("Zone2.Mute", "bool"), "sleep": ("Main.Sleep", "int"),
+    "auto_standby": ("Main.AutoStandby", "bool"),
     "listening_mode": ("Main.ListeningMode", "str"), "dimmer": ("Main.Dimmer", "str"),
     "model": ("Main.Model", "str"), "version": ("Main.Version", "str"),
 }

@@ -181,6 +181,18 @@ def test_extras_write():
     assert be.get_extra("zone2_power") is True
 
 
+def test_auto_standby_extra():
+    # The receiver's own idle timer: exposed as a switch so it can be seen and
+    # disabled (it silently powers the NAD off under a live TV otherwise).
+    rx, be = make()
+    rx.vars["Main.AutoStandby"] = "On"
+    assert "auto_standby" in {e.key for e in be.extras()}
+    assert be.get_extra("auto_standby") is True
+    assert be.set_extra("auto_standby", False)
+    assert rx.vars["Main.AutoStandby"] == "Off"
+    assert be.get_extra("auto_standby") is False
+
+
 def test_raw_passthrough():
     _, be = make()
     assert be.raw("Main.Model?") == "Main.Model=T757"
