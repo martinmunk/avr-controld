@@ -54,16 +54,59 @@ def is_airplay_mute(db: float) -> bool:
     return db <= -140.0
 
 
+#: Slider-to-receiver curves. "flat" is linear in dB (what the receiver's own
+#: dB scale gives). "standard" is shairport-sync's default mixer profile
+#: (``vol2attn`` in common.c): the ALPS-potentiometer-like taper that made the
+#: lower part of the phone slider usable when shairport drove the receiver
+#: through the ALSA mixer plugins -- a third of the slider is ~55%, half is 70%.
+#: A receiver migrated off the mixer path onto this daemon keeps its familiar
+#: feel with "standard"; "flat" makes the same slider position much quieter.
+AIRPLAY_CURVES = ("flat", "standard")
+
+# shairport's three-line taper, normalised: (x where the line starts at y=0,
+# y at x=-30 as a fraction of the full range). Scale-free, so the receiver's
+# range is irrelevant -- only the slider position on the AirPlay [-30, 0] axis.
+_STANDARD_LINES = ((0.0, -0.5), (-5.0, -0.75), (-17.0, -1.0))
+
+
+def airplay_standard_fraction(x: float) -> float:
+    """shairport-sync "standard" profile: AirPlay dB ``x`` in [-30, 0] -> fraction
+    of the receiver's range in [0, 1]. Mirrors ``vol2attn`` in common.c with the
+    attenuation expressed relative to the range (every line's end point in
+    vol2attn is proportional to range_db, so the shape does not depend on it)."""
+    if x <= -30.0:
+        return 0.0
+    if x >= 0.0:
+        return 1.0
+    attn = 0.0
+    for x0, y_end in _STANDARD_LINES:
+        if x <= x0:
+            t = y_end * (x - x0) / (-30.0 - x0)
+            if t < attn:
+                attn = t
+    return 1.0 + attn
+
+
 def airplay_db_to_pct(db: float, min_db: float = AIRPLAY_MIN_DB,
-                      max_db: float = 0.0) -> int:
-    """Map an AirPlay dB level to a 0-100 percent (linear over [min_db, max_db])."""
+                      max_db: float = 0.0, curve: str = "flat") -> int:
+    """Map an AirPlay dB level to a 0-100 percent over [min_db, max_db].
+
+    ``curve`` is one of :data:`AIRPLAY_CURVES`: "flat" is linear, "standard" is
+    shairport-sync's taper (see :func:`airplay_standard_fraction`). An unknown
+    curve raises ValueError so a config typo fails at startup, not at play time.
+    """
+    if curve not in AIRPLAY_CURVES:
+        raise ValueError(f"unknown airplay_curve {curve!r}; use one of {AIRPLAY_CURVES}")
     if max_db <= min_db:
         return 0
     if db <= min_db:
         return 0
     if db >= max_db:
         return 100
-    return round((db - min_db) / (max_db - min_db) * 100)
+    frac = (db - min_db) / (max_db - min_db)
+    if curve == "standard":
+        frac = airplay_standard_fraction(-30.0 + 30.0 * frac)
+    return round(frac * 100)
 
 
 def allow_step_up(current: int | None, ceiling: int) -> bool:

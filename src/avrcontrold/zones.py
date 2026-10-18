@@ -46,6 +46,7 @@ class ZoneTarget:
     ceiling: int
     source: str = ""
     airplay_min_db: float = -30.0
+    airplay_curve: str = "flat"
     # current receiver source name, for input-stolen detection (below).
     read_source: Optional[Callable[[], Optional[str]]] = None
     # internal: remember whether we drove this zone to mute, so we only unmute
@@ -84,7 +85,10 @@ class ZoneTarget:
             self.set_mute(False)
             self._muted = False
         pct = clamp_absolute(
-            airplay_db_to_pct(db, min_db=self.airplay_min_db), self.ceiling)
+            airplay_db_to_pct(db, min_db=self.airplay_min_db, curve=self.airplay_curve),
+            self.ceiling)
+        log.info("zone %s: airplay volume %.1f dB -> %d (%s curve, ceiling %d)",
+                 self.name, db, pct, self.airplay_curve, self.ceiling)
         self.set_volume(pct)
 
     def check_input_stolen(self, connected: bool, drop_fn: Callable[[], bool],
@@ -120,7 +124,8 @@ class ZoneTarget:
 
 
 def make_zone_target(target: str, backend: Backend, *, name: str, ceiling: int,
-                     source: str = "", airplay_min_db: float = -30.0) -> ZoneTarget:
+                     source: str = "", airplay_min_db: float = -30.0,
+                     airplay_curve: str = "flat") -> ZoneTarget:
     """Build a :class:`ZoneTarget` for ``target`` on ``backend``.
 
     ``target == "main"`` binds the backend's core methods; any other value is an
@@ -136,6 +141,7 @@ def make_zone_target(target: str, backend: Backend, *, name: str, ceiling: int,
             set_source=backend.set_input,
             read_source=backend.get_input,
             ceiling=ceiling, source=source, airplay_min_db=airplay_min_db,
+            airplay_curve=airplay_curve,
         )
     return ZoneTarget(
         name=name,
@@ -145,4 +151,5 @@ def make_zone_target(target: str, backend: Backend, *, name: str, ceiling: int,
         set_source=lambda src: backend.set_extra(f"{target}_source", src),
         read_source=lambda: backend.get_extra(f"{target}_source"),
         ceiling=ceiling, source=source, airplay_min_db=airplay_min_db,
+        airplay_curve=airplay_curve,
     )

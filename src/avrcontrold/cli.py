@@ -30,7 +30,8 @@ from .power_policy import PowerPolicy
 from .protocol import avr_socket_path
 from .shairport import ShairportWatcher
 from .socket_server import SocketServer
-from .volume import airplay_db_to_pct, clamp_absolute, clamp_ceiling, is_airplay_mute
+from .volume import (AIRPLAY_CURVES, airplay_db_to_pct, clamp_absolute, clamp_ceiling,
+                     is_airplay_mute)
 from .zones import make_zone_target
 
 # Map a config backend name to the canonical socket "type" the C ALSA plugins
@@ -253,6 +254,13 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- optional AirPlay volume sync (phone slider -> receiver) ---------
     airplay_min_db = float(cfg.get("airplay_min_db", "-30"))
+    # airplay_curve: "flat" (linear in dB) or "standard" (shairport-sync's own
+    # mixer taper; use it for a receiver that used to be driven through the
+    # ALSA mixer plugins so the phone slider keeps the feel it had).
+    airplay_curve = cfg.get("airplay_curve", "flat").strip().lower()
+    if airplay_curve not in AIRPLAY_CURVES:
+        raise SystemExit(f"config: airplay_curve must be one of {AIRPLAY_CURVES}, "
+                         f"got {airplay_curve!r}")
     _airplay_muted = [False]
 
     def on_airplay_volume(db):
@@ -269,7 +277,10 @@ def main(argv: list[str] | None = None) -> int:
             if _airplay_muted[0]:
                 backend.set_mute(False)
                 _airplay_muted[0] = False
-            pct = clamp_absolute(airplay_db_to_pct(db, min_db=airplay_min_db), ceiling)
+            pct = clamp_absolute(
+                airplay_db_to_pct(db, min_db=airplay_min_db, curve=airplay_curve), ceiling)
+            log.info("airplay volume: %.1f dB -> %d (%s curve, ceiling %d)",
+                     db, pct, airplay_curve, ceiling)
             backend.set_volume(pct)
 
     bridge = MqttBridge(device, backend, transport,
@@ -307,7 +318,8 @@ def main(argv: list[str] | None = None) -> int:
             zceil = clamp_ceiling(int(z["max_volume"])) if z["max_volume"] else ceiling
             zt = make_zone_target(z["target"], backend, name=z["name"],
                                   ceiling=zceil, source=z["input"],
-                                  airplay_min_db=airplay_min_db)
+                                  airplay_min_db=airplay_min_db,
+                                  airplay_curve=airplay_curve)
             w = ShairportWatcher(bus=z["bus"], label=z["name"], lock=lock)
             zpol = None
             if z["target"] == "main" and policy is not None:
@@ -365,9 +377,9 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("socket server disabled (bind failed on %s)", socket_path)
 
     log.info("starting: backend=%s node_id=%s mqtt=%s:%s ceiling=%s socket=%s "
-             "power_policy=%s shairport=%s", backend.name, node_id, transport.host,
-             transport.port, ceiling, socket_path if srv_ok else "(none)",
-             policy is not None, watcher is not None)
+             "power_policy=%s shairport=%s airplay_curve=%s", backend.name, node_id,
+             transport.host, transport.port, ceiling, socket_path if srv_ok else "(none)",
+             policy is not None, watcher is not None, airplay_curve)
     transport.start()
     try:
         while not stop.wait(poll_interval):

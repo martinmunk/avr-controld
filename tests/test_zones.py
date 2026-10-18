@@ -144,3 +144,13 @@ def test_input_recovers_when_source_returns():
     cur[0] = "TV"                                        # and away again
     zt.check_input_stolen(True, _drop_counter(dropped), now=106.0)
     assert dropped == [1, 1]                             # dropped again after recovery
+
+
+def test_zone_curve_applies_and_ceiling_still_clamps():
+    b = FakeBackend()
+    zt = make_zone_target("main", b, name="z", ceiling=60, airplay_curve="standard")
+    zt.on_volume(-20.0, playing=True)   # standard taper: a third -> 55
+    assert ("set_volume", 55) in b.calls
+    zt.on_volume(-10.0, playing=True)   # standard: 85 -> clamped to 60
+    assert ("set_volume", 60) in b.calls
+    assert not any(c == ("set_volume", 85) for c in b.calls)
