@@ -1,7 +1,7 @@
 Source: martinmunk-avr-controld
 Section: sound
 Priority: optional
-Maintainer: Martin Munk Hansen <skiers.56.haggis@icloud.com>
+Maintainer: Martin Munk Hansen <hansen@martinmunk.com>
 Build-Depends: debhelper-compat (= 13), python3, python3-venv, python3-pip, ca-certificates
 Standards-Version: 4.6.2
 Rules-Requires-Root: no

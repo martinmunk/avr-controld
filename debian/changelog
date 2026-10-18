@@ -5,7 +5,7 @@ martinmunk-alsa-control-avr (0.3.2) stable; urgency=medium
     controld restart (previously only sent on a TV state change). Pairs
     with the daemon acting on demand activation edges.
 
- -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Wed, 16 Sep 2026 09:31:31 +0000
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Wed, 16 Sep 2026 09:31:31 +0000
 
 martinmunk-alsa-control-avr (0.3.1) stable; urgency=medium
 

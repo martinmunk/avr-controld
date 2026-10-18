@@ -6,7 +6,7 @@ martinmunk-avr-controld (0.5.1) stable; urgency=medium
     remembered (full-scale input). Verified on VærkstedsTærten: sender 15% ->
     Opalum 15 at power-on, source Mixer, off 30 s after stop.
 
- -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Sun, 18 Oct 2026 14:21:38 +0000
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Sun, 18 Oct 2026 14:21:38 +0000
 
 martinmunk-avr-controld (0.5.0) stable; urgency=medium
 
@@ -18,7 +18,7 @@ martinmunk-avr-controld (0.5.0) stable; urgency=medium
     the daemon drives the Opalum from the D-Bus AirPlay volume, ceiling 50).
   * venv bundles opalum-receiver 0.1.0 from the Forgejo PyPI registry.
 
- -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Sun, 18 Oct 2026 14:15:21 +0000
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Sun, 18 Oct 2026 14:15:21 +0000
 
 martinmunk-avr-controld (0.4.3) stable; urgency=medium
 
@@ -37,7 +37,7 @@ martinmunk-avr-controld (0.4.3) stable; urgency=medium
     names) with HA entity categories; static ones read at announce only.
   * MQTT bridge: log every incoming command.
 
- -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Sun, 18 Oct 2026 14:03:22 +0000
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Sun, 18 Oct 2026 14:03:22 +0000
 
 martinmunk-avr-controld (0.4.2) stable; urgency=medium
 
@@ -47,7 +47,7 @@ martinmunk-avr-controld (0.4.2) stable; urgency=medium
     polling. Backlogged. Forward (phone -> NAD) and input-stolen handling are
     unchanged.
 
- -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Wed, 16 Sep 2026 13:45:00 +0000
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Wed, 16 Sep 2026 13:45:00 +0000
 
 martinmunk-avr-controld (0.4.1) stable; urgency=medium
 
@@ -58,7 +58,7 @@ martinmunk-avr-controld (0.4.1) stable; urgency=medium
     after apt upgrade). The unit is gated on ConditionPathExists=the config, so a
     fresh install without config does not crash-loop.
 
- -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Wed, 16 Sep 2026 13:10:00 +0000
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Wed, 16 Sep 2026 13:10:00 +0000
 
 martinmunk-avr-controld (0.4.0) stable; urgency=medium
 
@@ -80,4 +80,4 @@ martinmunk-avr-controld (0.4.0) stable; urgency=medium
     commands (CEC/phone volume); volume-signal bursts are coalesced.
   * Offline unit tests (no hardware/MQTT/serial) run hermetically in CI.
 
- -- Martin Munk Hansen <skiers.56.haggis@icloud.com>  Wed, 16 Sep 2026 11:35:00 +0000
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Wed, 16 Sep 2026 11:35:00 +0000
