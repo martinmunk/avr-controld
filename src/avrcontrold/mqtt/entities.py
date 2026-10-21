@@ -64,7 +64,17 @@ def base_topic(node_id: str) -> str:
 
 
 def availability_topic(node_id: str) -> str:
+    """online while the daemon runs AND its receiver link is up (last-will
+    'offline'); every receiver entity hangs off it, so HA shows them as
+    unavailable, not stale, when the serial adapter drops."""
     return f"{base_topic(node_id)}/availability"
+
+
+def daemon_topic(node_id: str) -> str:
+    """online while the daemon runs, regardless of the receiver link: the
+    availability of the `link` diagnostic sensor, which must stay readable
+    exactly when everything else is unavailable."""
+    return f"{base_topic(node_id)}/daemon"
 
 
 def discovery_topic(prefix: str, entity: Entity, node_id: str) -> str:
@@ -118,6 +128,15 @@ def build_entities(device: Device, caps: Capabilities,
         cfg.update({"command_topic": cmd, "options": list(inputs or []),
                     "icon": "mdi:import"})
         ents.append(Entity("select", "input", cfg, state, cmd))
+
+    # Every backend has a link (serial/telnet) that can die on its own; show it
+    # as a diagnostic, available whenever the daemon itself is.
+    cfg, state, _ = _common(device, "link", "binary_sensor")
+    cfg.update({"name": "Receiver Link", "device_class": "connectivity",
+                "entity_category": "diagnostic", "payload_on": PAYLOAD_ON,
+                "payload_off": PAYLOAD_OFF, "icon": "mdi:serial-port",
+                "availability_topic": daemon_topic(device.node_id)})
+    ents.append(Entity("binary_sensor", "link", cfg, state, None))
 
     return ents
 
@@ -180,7 +199,7 @@ def encode_state(key: str, value) -> str | None:
     """Backend state value -> MQTT state payload. None if unknown (no publish)."""
     if value is None:
         return None
-    if key in ("power", "mute"):
+    if key in ("power", "mute", "link"):
         return PAYLOAD_ON if value else PAYLOAD_OFF
     if key == "volume":
         return str(int(value))

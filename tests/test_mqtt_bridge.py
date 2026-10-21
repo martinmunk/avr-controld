@@ -113,6 +113,44 @@ def test_publish_state_deduplicates():
     assert cl.last("avrcontrold/nad_serial__dev_ttyUSB0/volume/state") == "41"
 
 
+def test_link_sensor_and_availability_follow_the_backend_link():
+    be, cl, br = make()
+    br.announce()
+    node = "avrcontrold/nad_serial__dev_ttyUSB0"
+    assert cl.last(f"{node}/daemon") == "online"
+    assert cl.last(f"{node}/availability") == "online"
+    assert cl.last(f"{node}/link/state") == "ON"
+    # Serial adapter drops: entities go unavailable (not stale), link sensor OFF.
+    be._connected = False
+    be._volume = None
+    n = len(cl.published)
+    br.publish_state()
+    assert cl.last(f"{node}/availability") == "offline"
+    assert cl.last(f"{node}/link/state") == "OFF"
+    assert cl.last(f"{node}/daemon") == "online"
+    # Steady state while down: nothing re-published.
+    n = len(cl.published)
+    br.publish_state()
+    assert len(cl.published) == n
+    # Link back: available again.
+    be._connected = True
+    be._volume = 50
+    br.publish_state()
+    assert cl.last(f"{node}/availability") == "online"
+    assert cl.last(f"{node}/link/state") == "ON"
+
+
+def test_link_sensor_discovery_uses_daemon_availability():
+    import json
+    be, cl, br = make()
+    br.announce()
+    cfg = json.loads(cl.last("homeassistant/binary_sensor/nad_serial__dev_ttyUSB0/link/config"))
+    assert cfg["availability_topic"].endswith("/daemon")
+    assert cfg["device_class"] == "connectivity"
+    assert cfg["entity_category"] == "diagnostic"
+    assert "command_topic" not in cfg
+
+
 def test_go_offline():
     be, cl, br = make()
     br.announce()
