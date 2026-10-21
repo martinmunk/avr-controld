@@ -15,9 +15,11 @@ when it owns power (see cli.own_receiver_power).
 from __future__ import annotations
 
 import logging
-from typing import Protocol
+import time
+from contextlib import suppress
+from typing import Callable, Protocol
 
-from .base import Backend, Capabilities, ExtraSpec
+from .base import Backend, Capabilities, ExtraSpec, Reconnect
 
 log = logging.getLogger(__name__)
 
@@ -44,38 +46,69 @@ class OpalumClient(Protocol):
     def get_standby_timeout(self) -> bool | None: ...
 
 
+def _open_opalum(device: str) -> OpalumClient:
+    from opalum_receiver import OpalumReceiver  # lazy: only needed live
+    # power_on=False: the library powers the device on at open by default
+    # (C++ heritage); power is the policy's job here.
+    return OpalumReceiver(device, power_on=False)
+
+
 class OpalumBackend(Backend):
     name = "Opalum Serial"
 
-    def __init__(self, device: str, *, receiver: OpalumClient | None = None):
+    def __init__(self, device: str, *, receiver: OpalumClient | None = None,
+                 factory: Callable[[str], OpalumClient] | None = None,
+                 reconnect_interval: float = 5.0,
+                 clock: Callable[[], float] = time.monotonic):
         self._device = device
         self._rx = receiver
+        self._factory = factory or _open_opalum    # device path -> client
+        self._reconnect = Reconnect(reconnect_interval, clock)
         self._connected = receiver is not None
 
     # ---- connection -----------------------------------------------------
+    def _drop_rx(self) -> None:
+        """Close and forget the client so the next connect() reopens the
+        configured path (which may now resolve to a different ttyUSBn)."""
+        rx, self._rx = self._rx, None
+        if rx is not None:
+            with suppress(Exception):
+                rx.close()
+
     def connect(self) -> bool:
+        """Open (or reopen) the port. Write-only protocol: no liveness query,
+        open port == connected; a failed command marks it disconnected and a
+        later call reopens. Rate-limited after a failure (see Reconnect)."""
+        if self._rx is not None and not self._connected:
+            self._drop_rx()                   # stale descriptor (EIO forever)
         if self._rx is None:
+            if not self._reconnect.due():
+                return False
             try:
-                from opalum_receiver import OpalumReceiver  # lazy: only needed live
-                # power_on=False: the library powers the device on at open by
-                # default (C++ heritage); power is the policy's job here.
-                self._rx = OpalumReceiver(self._device, power_on=False)
-            except Exception as exc:  # pragma: no cover - import/serial failure
-                log.error("Opalum: cannot open %s: %s", self._device, exc)
+                self._rx = self._factory(self._device)
+            except Exception as exc:
+                log.log(self._reconnect.failed(),
+                        "Opalum: cannot open %s: %s", self._device, exc)
                 self._connected = False
                 return False
-        # Write-only protocol: no liveness query. Open port == connected; a
-        # failed command marks it disconnected and the next call reopens.
+            if self._reconnect.failures:
+                log.debug("Opalum: reopened %s", self._device)
         self._connected = True
         return True
+
+    def close(self) -> None:
+        self._drop_rx()
+        self._connected = False
 
     def is_connected(self) -> bool:
         return self._connected
 
     def _guard(self):
-        if self._rx is None:
+        """The client to talk to, or None while the link is down (no I/O is
+        attempted then, except the rate-limited reconnect)."""
+        if self._rx is None or not self._connected:
             self.connect()
-        return self._rx
+        return self._rx if self._connected else None
 
     def _do(self, what: str, fn) -> bool:
         rx = self._guard()
@@ -84,10 +117,13 @@ class OpalumBackend(Backend):
         try:
             ok = bool(fn(rx))
         except Exception as exc:
-            log.warning("Opalum: %s failed: %s", what, exc)
+            log.log(self._reconnect.failed(),
+                    "Opalum: %s failed: %s (will reopen %s)", what, exc, self._device)
             self._connected = False
             return False
         self._connected = True
+        if self._reconnect.succeeded():
+            log.info("Opalum: link restored on %s", self._device)
         if not ok:
             log.warning("Opalum: %s not acknowledged", what)
         return ok
@@ -168,8 +204,13 @@ class OpalumBackend(Backend):
         if tr is None:
             return None
         try:
-            return tr.command(command)
+            reply = tr.command(command)
+            if self._reconnect.succeeded():
+                log.info("Opalum: link restored on %s", self._device)
+            return reply
         except Exception as exc:
-            log.warning("Opalum: raw '%s' failed: %s", command, exc)
+            log.log(self._reconnect.failed(),
+                    "Opalum: raw '%s' failed: %s (will reopen %s)",
+                    command, exc, self._device)
             self._connected = False
             return None

@@ -202,6 +202,89 @@ def test_io_error_marks_disconnected_and_unknown():
     assert be.is_connected() is False
 
 
+class Clock:
+    def __init__(self): self.t = 0.0
+    def __call__(self): return self.t
+
+
+def test_dead_port_is_dropped_and_reopened_after_the_interval():
+    """A USB hub reset re-enumerates the adapter: the old descriptor returns
+    EIO forever. The backend must close it and open the configured path again,
+    but only every reconnect_interval, and stay quiet in between."""
+    clock = Clock()
+    old, new = FakeNad(db=-40.0), FakeNad(db=-30.0)
+    opened = []
+    def factory(dev):
+        opened.append(dev)
+        return new
+    be = NADBackend("/dev/serial/by-id/x", receiver=old, factory=factory,
+                    reconnect_interval=5.0, clock=clock)
+    assert be.get_volume() == 50
+    old.raise_next = True
+    assert be.get_volume() is None and not be.is_connected()
+    # Within the interval: no reopen, no traffic on the dead client.
+    old.raise_next = True                       # would raise if touched
+    assert be.get_volume() is None
+    assert be.get_power() is None
+    assert opened == [] and old.raise_next is True
+    # After the interval: reopened on the configured path, state back.
+    clock.t = 5.0
+    assert be.get_volume() == 62                # from the new client (-30 dB)
+    assert be.is_connected()
+    assert opened == ["/dev/serial/by-id/x"]
+
+
+def test_reopen_failures_are_rate_limited():
+    clock = Clock()
+    attempts = []
+    def factory(dev):
+        attempts.append(clock.t)
+        raise OSError(2, "No such file or directory")
+    rx = FakeNad()
+    be = NADBackend("/dev/ttyUSB0", receiver=rx, factory=factory,
+                    reconnect_interval=5.0, clock=clock)
+    rx.raise_next = True
+    assert be.get_volume() is None
+    for t in (1.0, 4.9):
+        clock.t = t
+        assert be.connect() is False and be.get_power() is None
+    assert attempts == []
+    for t in (5.0, 7.0, 10.0, 11.0, 15.0):
+        clock.t = t
+        be.connect(); be.get_power()
+    assert attempts == [5.0, 10.0, 15.0]
+    assert not be.is_connected()
+
+
+def test_silent_port_counts_as_a_failure():
+    """Opened but nothing answers (cable to the receiver unplugged): the
+    liveness query fails without an exception; that must still be rate-limited."""
+    class _SilentTransport:
+        def communicate(self, command): return ""
+    class Silent:
+        transport = _SilentTransport()
+    clock = Clock()
+    opened = []
+    def factory(dev):
+        opened.append(clock.t)
+        return Silent()
+    be = NADBackend("/dev/ttyUSB0", factory=factory, reconnect_interval=5.0,
+                    clock=clock)
+    assert be.connect() is False and not be.is_connected()
+    for t in (1.0, 2.0, 4.9):
+        clock.t = t
+        assert be.get_power() is None
+    clock.t = 5.0
+    assert be.get_power() is None
+    assert opened == [0.0, 5.0]
+
+
+def test_close_releases_the_client():
+    rx, be = make()
+    be.close()
+    assert not be.is_connected()
+
+
 # ---- extras (via raw/transport) --------------------------------------------
 def test_extras_list_and_read():
     _, be = make()
