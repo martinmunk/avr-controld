@@ -97,15 +97,50 @@ def test_auto_standby_extra():
     assert be.get_extra("auto_standby") is False
 
 
+class Clock:
+    def __init__(self): self.t = 0.0
+    def __call__(self): return self.t
+
+
 def test_nack_and_io_error():
-    rx, be = make()
+    clock = Clock()
+    rx = FakeOpalum()
+    reopened = []
+    def factory(dev):
+        reopened.append(dev)
+        return rx
+    be = OpalumBackend("/dev/ttyUSB0", receiver=rx, factory=factory,
+                       reconnect_interval=5.0, clock=clock)
     rx.fail_next = True
     assert be.set_power(True) is False        # not acknowledged
     assert be.is_connected()
     rx.raise_next = True
     assert be.set_volume(10) is False
     assert not be.is_connected()
-    assert be.set_volume(10) and be.is_connected()   # next call reconnects
+    # Dead port: nothing is sent and nothing reopened until the interval passes.
+    assert be.set_volume(10) is False and reopened == []
+    assert rx.calls[-1] == "vol10" and len(rx.calls) == 2
+    clock.t = 5.0
+    assert be.set_volume(10) and be.is_connected()   # reopened via the factory
+    assert reopened == ["/dev/ttyUSB0"]
+
+
+def test_reopen_failures_are_rate_limited():
+    clock = Clock()
+    attempts = []
+    def factory(dev):
+        attempts.append(clock.t)
+        raise OSError(2, "No such file or directory")
+    rx = FakeOpalum()
+    be = OpalumBackend("/dev/ttyUSB0", receiver=rx, factory=factory,
+                       reconnect_interval=5.0, clock=clock)
+    rx.raise_next = True
+    assert be.set_volume(1) is False
+    for t in (1.0, 4.9, 5.0, 7.0, 10.0):
+        clock.t = t
+        be.set_volume(1)
+    assert attempts == [5.0, 10.0]
+    assert not be.is_connected()
 
 
 # ---- the real library over a fake serial line -------------------------------

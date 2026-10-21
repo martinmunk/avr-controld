@@ -24,10 +24,11 @@ from __future__ import annotations
 
 import logging
 import re
-from contextlib import nullcontext
-from typing import Any, Optional, Protocol
+import time
+from contextlib import nullcontext, suppress
+from typing import Any, Callable, Optional, Protocol
 
-from .base import Backend, Capabilities, ExtraSpec, PushEvent
+from .base import Backend, Capabilities, ExtraSpec, PushEvent, Reconnect
 
 # Extra NAD properties exposed beyond the core set. `static` ones are device
 # configuration/identity: read at announce and after a write, not every poll
@@ -127,6 +128,11 @@ class NadClient(Protocol):
     transport: Any
 
 
+def _open_nad(device: str) -> NadClient:
+    from nad_receiver import NADReceiver  # lazy: only needed live
+    return NADReceiver(device)
+
+
 def _on(value: Optional[str]) -> Optional[bool]:
     if value is None:
         return None
@@ -138,11 +144,17 @@ class NADBackend(Backend):
 
     def __init__(self, device: str, *, receiver: NadClient | None = None,
                  min_db: float = -80.0, max_db: float = 0.0,
-                 sources: list[str] | None = None):
+                 sources: list[str] | None = None,
+                 factory: Callable[[str], NadClient] | None = None,
+                 reconnect_interval: float = 5.0,
+                 clock: Callable[[], float] = time.monotonic):
         if max_db <= min_db:
             raise ValueError("max_db must be greater than min_db")
         self._device = device
         self._rx = receiver
+        self._factory = factory or _open_nad      # device path -> client
+        self._reconnect = Reconnect(reconnect_interval, clock)
+        self._in_connect = False
         self._min_db = float(min_db)
         self._max_db = float(max_db)
         self._sources = list(sources or [])       # manual override (names)
@@ -165,20 +177,59 @@ class NADBackend(Backend):
         return self._min_db + (pct / 100.0) * (self._max_db - self._min_db)
 
     # ---- connection -----------------------------------------------------
+    def _drop_rx(self) -> None:
+        """Close and forget the client so the next connect() reopens the
+        configured path (which may now resolve to a different ttyUSBn)."""
+        rx, self._rx = self._rx, None
+        if rx is None:
+            return
+        ser = getattr(getattr(rx, "transport", None), "ser", None)
+        with suppress(Exception):
+            if ser is not None:
+                ser.close()
+
     def connect(self) -> bool:
+        """Open (or reopen) the port and verify the receiver answers.
+
+        Rate-limited: once the link has failed, attempts are spaced
+        ``reconnect_interval`` apart and return False in between without
+        touching the port, so callers can call this freely.
+        """
+        if self._in_connect:
+            return self._connected
+        if self._rx is not None and not self._connected:
+            self._drop_rx()                   # stale descriptor (EIO forever)
         if self._rx is None:
+            if not self._reconnect.due():
+                return False
             try:
-                from nad_receiver import NADReceiver  # lazy: only needed live
-                self._rx = NADReceiver(self._device)
-            except Exception as exc:  # pragma: no cover - import/serial failure
-                log.error("NAD: cannot open %s: %s", self._device, exc)
+                self._rx = self._factory(self._device)
+            except Exception as exc:
+                log.log(self._reconnect.failed(),
+                        "NAD: cannot open %s: %s", self._device, exc)
                 self._connected = False
                 return False
-        # A query doubles as a liveness check.
-        self._connected = self._q("Main.Power") is not None
-        if self._connected and not self._num_to_name:
+        self._in_connect = True
+        try:
+            # A query doubles as a liveness check.
+            self._connected = self._q("Main.Power") is not None
+        finally:
+            self._in_connect = False
+        if not self._connected:
+            # Opened but no (valid) reply: count it like an I/O error so the
+            # next attempt waits for the interval instead of every query.
+            log.log(self._reconnect.failed(), "NAD: no reply on %s", self._device)
+            self._drop_rx()
+            return False
+        if self._reconnect.succeeded():
+            log.info("NAD: reconnected on %s", self._device)
+        if not self._num_to_name:
             self._discover()
-        return self._connected
+        return True
+
+    def close(self) -> None:
+        self._drop_rx()
+        self._connected = False
 
     def _discover(self) -> None:
         """Read Source<n>.Name/Enabled so HA gets a source selector with the NAD's
@@ -220,9 +271,13 @@ class NADBackend(Backend):
         return self._connected
 
     def _guard(self):
-        if self._rx is None:
+        """The client to talk to, or None while the link is down (no I/O is
+        attempted then, except the rate-limited reconnect)."""
+        if self._in_connect:
+            return self._rx
+        if self._rx is None or not self._connected:
             self.connect()
-        return self._rx
+        return self._rx if self._connected else None
 
     def capabilities(self) -> Capabilities:
         return Capabilities(absolute=True, query=True, mute=True,
@@ -434,6 +489,8 @@ class NADBackend(Backend):
             self._connected = True
             return reply
         except Exception as exc:
-            log.warning("NAD: raw '%s' failed: %s", command, exc)
+            log.log(self._reconnect.failed(),
+                    "NAD: raw '%s' failed: %s (will reopen %s)",
+                    command, exc, self._device)
             self._connected = False
             return None

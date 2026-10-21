@@ -9,8 +9,47 @@ the value is unknown (not yet queried / unsupported), matching the protocol's
 
 from __future__ import annotations
 
+import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Callable
+
+
+class Reconnect:
+    """Rate-limits reopen attempts after a transport died.
+
+    A serial adapter that drops off USB (hub reset, cable, re-enumeration as a
+    new ttyUSBn) leaves the old descriptor returning EIO forever; the backend
+    must close it and open the configured path again. This helper spaces those
+    attempts ``interval`` seconds apart so a sweep of a dozen state queries per
+    poll does not turn into a reopen storm or a journal flood, and it tells the
+    caller which log level a failure deserves: WARNING for the first one after a
+    working connection, DEBUG for the repeats until it works again.
+    """
+
+    def __init__(self, interval: float = 5.0,
+                 clock: Callable[[], float] = time.monotonic):
+        self.interval = float(interval)
+        self._clock = clock
+        self._next = 0.0          # earliest time for the next attempt
+        self.failures = 0         # consecutive failures since the last success
+
+    def due(self) -> bool:
+        return self._clock() >= self._next
+
+    def failed(self) -> int:
+        """Record a failure; returns the log level for reporting it."""
+        self.failures += 1
+        self._next = self._clock() + self.interval
+        return logging.WARNING if self.failures == 1 else logging.DEBUG
+
+    def succeeded(self) -> bool:
+        """Record success; returns True if this ends an outage."""
+        recovered = self.failures > 0
+        self.failures = 0
+        self._next = 0.0
+        return recovered
 
 
 @dataclass(frozen=True)
