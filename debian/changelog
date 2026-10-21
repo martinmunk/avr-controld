@@ -1,3 +1,10 @@
+martinmunk-avr-controld (0.5.4) stable; urgency=medium
+
+  * backends: reopen the serial port after an I/O failure (rate-limited)
+  * mqtt: "Receiver Link" diagnostic + availability follows the receiver link
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Wed, 21 Oct 2026 22:35:40 +0000
+
 martinmunk-avr-controld (0.5.3) stable; urgency=medium
 
   * AirPlay volume: optional shairport "standard" curve + log every applied level
