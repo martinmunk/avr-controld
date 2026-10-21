@@ -6,7 +6,8 @@ and Opalum over RS232 today) and serves everyone else:
 - a Unix-socket text protocol (`docs/socket-protocol.md`) for the ALSA ctl plugins,
   `avr-cec-relay` and `avr-power` from the `alsa-avr-control` repo (the socket clients),
 - Home Assistant via MQTT discovery (power/volume/mute/input plus every extra the
-  receiver exposes),
+  receiver exposes, and a "Receiver Link" diagnostic: the entities go unavailable,
+  not stale, while the serial link is down),
 - a power policy driven by shairport-sync over D-Bus (AirPlay playing) and by the CEC
   relay (TV active), with a hardware-safety volume ceiling on every absolute volume path.
 

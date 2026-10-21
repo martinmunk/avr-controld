@@ -34,6 +34,7 @@ def _read(backend: Backend, key: str):
         "volume": backend.get_volume,
         "mute": backend.get_mute,
         "input": backend.get_input,
+        "link": backend.is_connected,
     }[key]()
 
 
@@ -67,6 +68,7 @@ class MqttBridge:
         # a write to them, never on the periodic sweep: each is a serial
         # round-trip and they don't change on their own.
         self._dirty: set[str] = set()
+        self._online: bool | None = None       # last published availability
 
     # ---- lifecycle ------------------------------------------------------
     def announce(self) -> None:
@@ -78,15 +80,31 @@ class MqttBridge:
                 self.client.subscribe(e.command_topic)
         if self.on_demand:
             self.client.subscribe(self._demand_prefix + "+")
-        self.set_availability(True)
+        self.set_daemon_online(True)
+        self._online = None                    # (re)publish on this session
         self.publish_state(force=True)
 
+    def set_daemon_online(self, online: bool) -> None:
+        """The daemon-level flag (the `link` sensor's availability)."""
+        self.client.publish(E.daemon_topic(self.device.node_id),
+                            "online" if online else "offline", retain=True)
+
     def set_availability(self, online: bool) -> None:
+        """Receiver availability: daemon up AND link up. Published on change
+        by publish_state; call with False at shutdown."""
+        if online == self._online:
+            return
+        self._online = online
         self.client.publish(E.availability_topic(self.device.node_id),
                             "online" if online else "offline", retain=True)
+        if online:
+            log.info("mqtt: receiver available (link up)")
+        else:
+            log.warning("mqtt: receiver unavailable (link down)")
 
     # ---- state out ------------------------------------------------------
     def publish_state(self, force: bool = False) -> None:
+        self.set_availability(self.backend.is_connected())
         for e in self.entities:
             # Take the serial lock only around the read, then release it before
             # the next entity, so interactive socket commands can interleave.

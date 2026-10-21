@@ -19,8 +19,9 @@ def _by_key(ents):
 
 def test_full_capabilities_produce_expected_entities():
     ents = _by_key(E.build_entities(DEV, FULL, inputs=["TV", "CD"]))
-    assert set(ents) == {"power", "volume", "mute", "input"}
+    assert set(ents) == {"power", "volume", "mute", "input", "link"}
     assert ents["power"].component == "switch"
+    assert ents["link"].component == "binary_sensor"
     assert ents["volume"].component == "number"
     assert ents["mute"].component == "switch"
     assert ents["input"].component == "select"
@@ -29,7 +30,7 @@ def test_full_capabilities_produce_expected_entities():
 def test_capabilities_gate_entities():
     caps = Capabilities(absolute=False, mute=True, input_select=False, power=False)
     ents = _by_key(E.build_entities(DEV, caps))
-    assert set(ents) == {"mute"}          # only mute is capable
+    assert set(ents) == {"mute", "link"}  # only mute is capable; link is always there
 
 
 def test_number_uses_capability_range():

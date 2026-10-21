@@ -431,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
             srv.stop()
         with lock:
             bridge.set_availability(False)
+            bridge.set_daemon_online(False)
         transport.stop()
         backend.close()
     return 0
