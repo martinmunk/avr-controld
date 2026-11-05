@@ -90,6 +90,12 @@ def build_backend(cfg: dict) -> Backend:
     raise SystemExit(f"unknown backend: {kind}")
 
 
+def mqtt_enabled(cfg: dict) -> bool:
+    """MQTT/Home Assistant is opt-in: enabled only when ``mqtt_host`` is set and
+    non-empty. Without it the daemon is a pure socket broker."""
+    return bool((cfg.get("mqtt_host") or "").strip())
+
+
 def default_node_id(cfg: dict) -> str:
     ident = cfg.get("device") or f"{cfg.get('mqtt_host','')}"
     return sanitize(f"{cfg.get('backend','nad')}_{ident}")
@@ -173,14 +179,19 @@ def main(argv: list[str] | None = None) -> int:
     ceiling = int(cfg.get("max_volume", "100"))
     poll_interval = float(cfg.get("poll_interval", "5"))
 
-    from .mqtt.paho_client import PahoTransport   # lazy: paho only needed at runtime
-    transport = PahoTransport(
-        host=cfg.get("mqtt_host", "localhost"),
-        port=int(cfg.get("mqtt_port", "1883")),
-        node_id=node_id,
-        username=cfg.get("mqtt_user") or None,
-        password=cfg.get("mqtt_pass") or os.environ.get("MQTT_PASS"),
-    )
+    # MQTT / Home Assistant is one client of this daemon, not its reason to
+    # exist: with no mqtt_host configured the daemon serves the socket clients
+    # (ALSA plugins, CEC relay, power policy) and never touches a broker.
+    transport = None
+    if mqtt_enabled(cfg):
+        from .mqtt.paho_client import PahoTransport   # lazy: paho only needed at runtime
+        transport = PahoTransport(
+            host=cfg["mqtt_host"].strip(),
+            port=int(cfg.get("mqtt_port", "1883")),
+            node_id=node_id,
+            username=cfg.get("mqtt_user") or None,
+            password=cfg.get("mqtt_pass") or os.environ.get("MQTT_PASS"),
+        )
     # Reentrant: the socket dispatch holds the lock and calls the shairport
     # snapshot provider, which also takes it; the power callbacks nest too.
     lock = threading.RLock()
@@ -283,14 +294,15 @@ def main(argv: list[str] | None = None) -> int:
                      db, pct, airplay_curve, ceiling)
             backend.set_volume(pct)
 
-    bridge = MqttBridge(device, backend, transport,
-                        ceiling=ceiling,
-                        discovery_prefix=cfg.get("discovery_prefix", "homeassistant"),
-                        on_demand=(feed_demand if policy is not None else None),
-                        lock=lock)
-
-    transport.on_connect = lambda: _locked(lock, bridge.announce)
-    transport.on_message = lambda t, p: _locked(lock, lambda: bridge.handle_message(t, p))
+    bridge = None
+    if transport is not None:
+        bridge = MqttBridge(device, backend, transport,
+                            ceiling=ceiling,
+                            discovery_prefix=cfg.get("discovery_prefix", "homeassistant"),
+                            on_demand=(feed_demand if policy is not None else None),
+                            lock=lock)
+        transport.on_connect = lambda: _locked(lock, bridge.announce)
+        transport.on_message = lambda t, p: _locked(lock, lambda: bridge.handle_message(t, p))
 
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -376,11 +388,13 @@ def main(argv: list[str] | None = None) -> int:
     else:
         log.warning("socket server disabled (bind failed on %s)", socket_path)
 
-    log.info("starting: backend=%s node_id=%s mqtt=%s:%s ceiling=%s socket=%s "
+    log.info("starting: backend=%s node_id=%s mqtt=%s ceiling=%s socket=%s "
              "power_policy=%s shairport=%s airplay_curve=%s", backend.name, node_id,
-             transport.host, transport.port, ceiling, socket_path if srv_ok else "(none)",
+             f"{transport.host}:{transport.port}" if transport is not None else "disabled",
+             ceiling, socket_path if srv_ok else "(none)",
              policy is not None, watcher is not None, airplay_curve)
-    transport.start()
+    if transport is not None:
+        transport.start()
     try:
         while not stop.wait(poll_interval):
             # Keep each lock hold short so interactive socket commands (CEC/phone
@@ -423,16 +437,18 @@ def main(argv: list[str] | None = None) -> int:
                     zt.check_input_stolen(connected, w.drop_session, now)
             # publish_state takes the lock per read internally (released between
             # reads), so this long sweep doesn't block interactive commands.
-            bridge.publish_state()
+            if bridge is not None:
+                bridge.publish_state()
     finally:
         for w in watchers:
             w.stop()
         if srv_ok:
             srv.stop()
-        with lock:
-            bridge.set_availability(False)
-            bridge.set_daemon_online(False)
-        transport.stop()
+        if bridge is not None:
+            with lock:
+                bridge.set_availability(False)
+                bridge.set_daemon_online(False)
+            transport.stop()
         backend.close()
     return 0
 

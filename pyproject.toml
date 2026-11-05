@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "avrcontrold"
 version = "0.4.0.dev0"
-description = "Python broker daemon that owns each AV receiver connection and bridges it to Home Assistant over MQTT"
+description = "Broker daemon for AV receivers: one owner of the serial/telnet link, serving ALSA plugins, HDMI-CEC, AirPlay power policy and Home Assistant"
 requires-python = ">=3.11"
 authors = [{ name = "Martin Munk Hansen", email = "hansen@martinmunk.com" }]
 license = "MIT"

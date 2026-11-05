@@ -1,13 +1,14 @@
 # avr-controld
 
-Python broker daemon that owns the one real connection to each AV receiver (NAD T757
-and Opalum over RS232 today) and serves everyone else:
+Broker daemon for AV receivers: one owner of the serial/telnet link (NAD T757 and
+Opalum over RS232 today), serving everyone else:
 
 - a Unix-socket text protocol (`docs/socket-protocol.md`) for the ALSA ctl plugins,
   `avr-cec-relay` and `avr-power` from the `alsa-avr-control` repo (the socket clients),
-- Home Assistant via MQTT discovery (power/volume/mute/input plus every extra the
-  receiver exposes, and a "Receiver Link" diagnostic: the entities go unavailable,
-  not stale, while the serial link is down),
+- optionally Home Assistant via MQTT discovery (power/volume/mute/input plus every
+  extra the receiver exposes, and a "Receiver Link" diagnostic: the entities go
+  unavailable, not stale, while the serial link is down) -- set `mqtt_host` to
+  enable it, leave it unset to run as a pure socket broker,
 - a power policy driven by shairport-sync over D-Bus (AirPlay playing) and by the CEC
   relay (TV active), with a hardware-safety volume ceiling on every absolute volume path.
 
