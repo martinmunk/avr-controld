@@ -17,6 +17,6 @@ protocol and the two-zone AirPlay setup, `examples/config.conf` for configuratio
 
 ```
 PYTHONPATH=src python3 -m pytest -q         # offline suite, no hardware/broker/serial needed
-dpkg-buildpackage -b --no-sign -rfakeroot   # the .deb (needs LAN access to the Forgejo PyPI index)
+dpkg-buildpackage -b --no-sign -rfakeroot   # the .deb (bundles the venv from public PyPI)
 ./create-release.sh                         # tag release/X.Y.Z -> CI builds + publishes
 ```

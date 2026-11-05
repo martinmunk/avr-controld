@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,11 +7,19 @@ name = "avrcontrold"
 version = "0.4.0.dev0"
 description = "Python broker daemon that owns each AV receiver connection and bridges it to Home Assistant over MQTT"
 requires-python = ">=3.11"
-authors = [{ name = "Martin Munk Hansen" }]
+authors = [{ name = "Martin Munk Hansen", email = "hansen@martinmunk.com" }]
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
 
 # Runtime deps are declared as extras so the offline test suite (pure logic +
 # injected fakes) needs none of them. Each backend / integration pulls its own.
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/martinmunk/avr-controld"
+Source = "https://github.com/martinmunk/avr-controld"
+Issues = "https://github.com/martinmunk/avr-controld/issues"
 
 [project.optional-dependencies]
 nad = ["nad-receiver>=0.3"]

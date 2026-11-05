@@ -1,6 +1,6 @@
 [Unit]
 Description=avr-controld (Python) -- AVR broker + Home Assistant MQTT bridge
-Documentation=https://forgejo.servers.vejen.loc.martinmunk.com/martinmunk/alsa-avr-control
+Documentation=https://github.com/martinmunk/avr-controld
 After=network-online.target
 Wants=network-online.target
 
