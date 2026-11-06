@@ -1,34 +1,32 @@
 #!/usr/bin/make -f
 export DH_VERBOSE=1
+export PIP_BREAK_SYSTEM_PACKAGES=1
+export PIP_DISABLE_PIP_VERSION_CHECK=1
 
-VENV := /opt/avr-controld/venv
 PKG  := debian/martinmunk-avr-controld
+ROOT := $(PKG)/opt/avr-controld
+LIB  := $(ROOT)/lib
 
 %:
 	dh $@
 
-# Pure-Python venv built at its final runtime path so shebangs/pyvenv.cfg are
-# already correct -- no relocation needed. Built here (root in the CI container),
-# cleaned in dh_auto_clean.
+# No virtualenv: a venv hard-codes one interpreter version (lib/python3.X,
+# pyvenv.cfg), which forced "Depends: python3.13". Every runtime dependency is
+# pure Python, so they are installed as a private library tree with
+# `pip --target` and run by the system /usr/bin/python3 through a small
+# launcher that puts that tree first on sys.path. The package then works on
+# any python3 >= 3.11 (Debian bookworm/trixie, Ubuntu 24.04+, Raspberry Pi OS).
 override_dh_auto_configure:
-
 override_dh_auto_build:
-	python3.13 -m venv $(VENV)
-	$(VENV)/bin/pip install --no-cache-dir --upgrade pip
-	$(VENV)/bin/pip install --no-cache-dir -r requirements-venv.txt
-	$(VENV)/bin/pip install --no-cache-dir --no-deps .
-	# Pin the interpreter symlinks to the concrete python3.13 (not the generic
-	# /usr/bin/python3, which would follow a future default-python bump and break
-	# the 3.13 venv). This makes `Depends: python3.13` correct and stable.
-	ln -sf /usr/bin/python3.13 $(VENV)/bin/python3.13
-	ln -sf python3.13 $(VENV)/bin/python3
-	ln -sf python3.13 $(VENV)/bin/python
-
 override_dh_auto_test:
 
 override_dh_auto_install:
-	mkdir -p $(PKG)/opt/avr-controld
-	cp -a $(VENV) $(PKG)/opt/avr-controld/venv
+	pip install --no-cache-dir --no-compile --target $(LIB) -r requirements-venv.txt
+	pip install --no-cache-dir --no-compile --no-deps --target $(LIB) .
+	# pip --target drops console-script stubs into lib/bin; the launcher replaces them.
+	rm -rf $(LIB)/bin
+	find $(LIB) -name '__pycache__' -type d -prune -exec rm -rf {} +
+	install -D -m0755 debian/avr-controld.launcher $(ROOT)/bin/avr-controld
 	install -D -m0644 examples/config.conf \
 		$(PKG)/usr/share/doc/martinmunk-avr-controld/examples/config.conf
 
@@ -38,5 +36,5 @@ override_dh_installsystemd:
 	dh_installsystemd --name=avr-controld-py
 
 override_dh_auto_clean:
-	rm -rf $(VENV) build *.egg-info src/*.egg-info
+	rm -rf build *.egg-info src/*.egg-info
 	dh_auto_clean

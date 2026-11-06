@@ -1,0 +1,114 @@
+# Public release of the Debian package as a GitHub Release asset.
+#
+# Forgejo is the source of truth. `./create-release.sh X.Y.Z` writes the
+# changelog entry and pushes a `release/X.Y.Z` tag to Forgejo; the Forgejo
+# workflow publishes to the private registry, and the push mirror carries the
+# tag here, where this workflow builds the same package and attaches it to a
+# GitHub Release. The apt repository at https://martinmunk.github.io/apt picks
+# the asset up from there.
+name: Release package
+
+on:
+  push:
+    tags: ["release/*"]
+  workflow_dispatch:
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+  LANG: C.UTF-8
+
+jobs:
+  build:
+    name: Build package (arch all)
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates debhelper python3 python3-pip dpkg-dev fakeroot
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the tag matches debian/changelog
+        if: startsWith(github.ref, 'refs/tags/release/')
+        run: |
+          tag="${GITHUB_REF_NAME#release/}"
+          ver="$(dpkg-parsechangelog -S Version)"
+          [ "$tag" = "$ver" ] || { echo "tag $tag != changelog $ver"; exit 1; }
+      - name: Build
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          dpkg-buildpackage -b --no-sign -rfakeroot
+          mkdir -p dist && mv ../martinmunk-avr-controld_*.deb dist/
+          (cd dist && sha256sum *.deb > SHA256SUMS)
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/
+
+  verify:
+    name: Install on ${{ matrix.image }}
+    needs: build
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:bookworm", "debian:trixie", "ubuntu:24.04"]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+          path: dist
+      - name: Install and smoke-run the daemon
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq python3 >/dev/null
+          python3 --version
+          dpkg -i dist/martinmunk-avr-controld_*.deb || apt-get -y -qq -f install
+          python3 -B -c "import sys; sys.path.insert(0, '/opt/avr-controld/lib'); import avrcontrold, nad_receiver, opalum_receiver, paho.mqtt.client, serial, jeepney; print('imports OK')"
+          /opt/avr-controld/bin/avr-controld -o backend=demo -o avr_socket=/run/avrd.sock -o poll_interval=1 > /tmp/d.log 2>&1 &
+          for i in $(seq 1 10); do [ -S /run/avrd.sock ] && break; sleep 0.5; done
+          python3 -c "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect('/run/avrd.sock'); s.sendall(b'GET volume\n'); r=s.recv(64); print(r); assert r.startswith(b'OK')"
+          kill -TERM %1; wait %1
+          grep -q 'mqtt=disabled' /tmp/d.log
+
+  release:
+    name: GitHub Release
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/release/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+          path: dist
+      - name: Release notes from debian/changelog
+        run: |
+          sudo apt-get install -y -qq dpkg-dev >/dev/null
+          ver="${GITHUB_REF_NAME#release/}"
+          { echo "## martinmunk-avr-controld $ver"; echo; dpkg-parsechangelog -S Changes | tail -n +3; echo; echo "Install with \`dpkg -i\`, or through the apt repository: https://martinmunk.github.io/apt"; } > notes.md
+          cat notes.md
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver="${GITHUB_REF_NAME#release/}"
+          gh release create "$GITHUB_REF_NAME" --title "martinmunk-avr-controld $ver" --notes-file notes.md dist/*
+      # Ask the apt repository to rebuild its index now instead of waiting for
+      # its schedule. Optional: needs a token with access to martinmunk/apt.
+      - name: Notify the apt repository
+        if: ${{ env.APT_DISPATCH_TOKEN != '' }}
+        env:
+          APT_DISPATCH_TOKEN: ${{ secrets.APT_DISPATCH_TOKEN }}
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $APT_DISPATCH_TOKEN" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/martinmunk/apt/dispatches \
+            -d '{"event_type":"package-released","client_payload":{"repo":"${{ github.repository }}","tag":"${{ github.ref_name }}"}}'

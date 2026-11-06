@@ -1,0 +1,16 @@
+#!/usr/bin/python3
+"""Launcher for the packaged avr-controld.
+
+The daemon and its pure-Python dependencies live in /opt/avr-controld/lib,
+installed by the Debian package. Putting that tree first on sys.path keeps the
+daemon independent of whatever is installed system-wide, while running on the
+system interpreter (any python3 >= 3.11).
+"""
+import sys
+
+sys.dont_write_bytecode = True          # keep /opt/avr-controld/lib dpkg-clean
+sys.path.insert(0, "/opt/avr-controld/lib")
+
+from avrcontrold.cli import main        # noqa: E402
+
+sys.exit(main())

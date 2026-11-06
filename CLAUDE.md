@@ -26,12 +26,15 @@ relay, two AirPlay zones) and **VærkstedsTærten** (192.168.20.217, Opalum).
 ## Build, deploy, release
 
 - **Never build on the Pis.** Dev builds: `dch -b -v X.Y.Z~devN ...`, then
-  `dpkg-buildpackage -b --no-sign -rfakeroot` in a Debian trixie container (the venv
-  build needs LAN access to the Forgejo PyPI index for `opalum-receiver`), `dpkg -i` on
-  the Pi, then `git checkout -- debian/changelog`. Everything on a Pi must be dpkg-tracked.
+  `dpkg-buildpackage -b --no-sign -rfakeroot` (Debian trixie; the build pip-installs the
+  pinned deps from public PyPI into `/opt/avr-controld/lib`, no venv, runs on the system
+  `python3 >= 3.11`), `dpkg -i` on the Pi, then `git checkout -- debian/changelog`.
+  Everything on a Pi must be dpkg-tracked.
 - **Releases are cut on `main` only, never from a branch**, and only via
   `./create-release.sh` (writes the changelog from git, tags `release/X.Y.Z`, pushes),
-  which CI (`.forgejo/workflows/publish.yml`) builds and
+  which Forgejo CI (`.forgejo/workflows/publish.yml`) builds and publishes privately, and
+  which the GitHub mirror turns into a public GitHub Release + apt repo entry
+  (`.github/workflows/release.yml`; apt index at martinmunk/apt). Forgejo CI builds and
   publishes to the Forgejo apt registry. Never curl-upload a package by hand. Never
   hand-edit the changelog for a release or set DEBEMAIL; identity comes from git config.
 - CI runs on Forgejo (`.forgejo/`), `runs-on: docker`, Debian trixie. The package is

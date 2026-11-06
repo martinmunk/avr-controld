@@ -1,5 +1,5 @@
 [Unit]
-Description=avr-controld (Python) -- AVR broker + Home Assistant MQTT bridge
+Description=avr-controld -- AV receiver broker (socket API, optional Home Assistant MQTT)
 Documentation=https://github.com/martinmunk/avr-controld
 After=network-online.target
 Wants=network-online.target
@@ -8,7 +8,7 @@ ConditionPathExists=/etc/avr-controld/config.conf
 
 [Service]
 Type=simple
-ExecStart=/opt/avr-controld/venv/bin/avr-controld --config /etc/avr-controld/config.conf
+ExecStart=/opt/avr-controld/bin/avr-controld --config /etc/avr-controld/config.conf
 Restart=always
 RestartSec=5
 # Serial backends (NAD/Opalum) need /dev/ttyUSB* (group dialout).

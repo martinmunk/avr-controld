@@ -42,7 +42,7 @@ jobs:
         run: PYTHONPATH=src python3 -m pytest -q
 
   python-package:
-    name: Build + verify venv package (arch all)
+    name: Build + verify package (arch all)
     runs-on: docker
     container:
       image: debian:trixie
@@ -60,20 +60,20 @@ jobs:
           fetch-depth: 0
 
       - name: Install packaging deps
-        run: apt-get install -y -qq debhelper python3 python3-venv python3-pip dpkg-dev fakeroot
+        run: apt-get install -y -qq debhelper python3 python3-pip dpkg-dev fakeroot
 
-      - name: Build venv package
+      - name: Build package
         run: |
           dpkg-buildpackage -b --no-sign -rfakeroot
           ls -lh ../martinmunk-avr-controld_*_all.deb
 
       # In-job verification (this runner serves no Actions logs). Install the
-      # freshly built package and prove the bundled venv resolves all deps and
+      # freshly built package and prove the bundled library tree resolves all deps and
       # the daemon starts.
       - name: Verify package installs and runs
         run: |
           DEB=$(ls ../martinmunk-avr-controld_*_all.deb | head -1)
           dpkg -i "$DEB" || (apt-get -y -f install && dpkg -i "$DEB")
-          /opt/avr-controld/venv/bin/python -c "import avrcontrold, nad_receiver, opalum_receiver, paho.mqtt.client, serial, jeepney; print('venv imports OK')"
-          timeout 2 /opt/avr-controld/venv/bin/avr-controld -o backend=demo -o node_id=ci -o mqtt_host=127.0.0.1 -o poll_interval=1 || true
-          echo "venv package verify OK"
+          /usr/bin/python3 -c "import sys; sys.path.insert(0, '/opt/avr-controld/lib'); import avrcontrold, nad_receiver, opalum_receiver, paho.mqtt.client, serial, jeepney; print('library tree imports OK')"
+          timeout 2 /opt/avr-controld/bin/avr-controld -o backend=demo -o node_id=ci -o poll_interval=1 || true
+          echo "package verify OK"

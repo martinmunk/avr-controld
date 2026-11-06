@@ -3,18 +3,19 @@ Section: sound
 Priority: optional
 Maintainer: Martin Munk Hansen <hansen@martinmunk.com>
 Homepage: https://github.com/martinmunk/avr-controld
-Build-Depends: debhelper-compat (= 13), python3, python3-venv, python3-pip, ca-certificates
+Build-Depends: debhelper-compat (= 13), python3, python3-pip, ca-certificates
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
 
 Package: martinmunk-avr-controld
 Architecture: all
-Depends: ${misc:Depends}, python3.13
+Depends: ${misc:Depends}, python3 (>= 3.11)
 Description: broker daemon for AV receivers (serial/telnet), socket API, MQTT
  avr-controld owns the one connection to an AV receiver (NAD, Opalum, ...) and
  serves it to the ALSA volume plugins, the HDMI-CEC relay and an AirPlay power
  policy over a Unix socket, and optionally to Home Assistant as MQTT entities
- (power/volume/mute/input and every extra the receiver exposes). It ships a
- self-contained virtualenv under /opt/avr-controld/venv with all Python
- dependencies bundled (nad_receiver, paho-mqtt, pyserial), so nothing is pulled
- from PyPI on the target and everything stays dpkg-tracked.
+ (power/volume/mute/input and every extra the receiver exposes). It ships all
+ Python dependencies (nad-receiver, opalum-receiver, paho-mqtt, pyserial,
+ jeepney) as a private library tree under /opt/avr-controld/lib, run by the
+ system python3, so nothing is pulled from PyPI on the target and everything
+ stays dpkg-tracked.

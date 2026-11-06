@@ -12,7 +12,7 @@ env:
 
 jobs:
   publish-python:
-    name: Build & Publish venv package (arch all)
+    name: Build & Publish package (arch all)
     runs-on: docker
     container:
       image: debian:trixie
@@ -30,9 +30,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install packaging deps
-        run: apt-get install -y -qq debhelper python3 python3-venv python3-pip dpkg-dev fakeroot
+        run: apt-get install -y -qq debhelper python3 python3-pip dpkg-dev fakeroot
 
-      - name: Build venv package
+      - name: Build package
         run: |
           dpkg-buildpackage -b --no-sign -rfakeroot
           ls -lh ../martinmunk-avr-controld_*_all.deb
@@ -41,7 +41,7 @@ jobs:
         run: |
           DEB=$(ls ../martinmunk-avr-controld_*_all.deb | head -1)
           dpkg -i "$DEB" || (apt-get -y -f install && dpkg -i "$DEB")
-          /opt/avr-controld/venv/bin/python -c "import avrcontrold, nad_receiver, opalum_receiver, paho.mqtt.client, serial, jeepney; print('venv imports OK')"
+          /usr/bin/python3 -c "import sys; sys.path.insert(0, '/opt/avr-controld/lib'); import avrcontrold, nad_receiver, opalum_receiver, paho.mqtt.client, serial, jeepney; print('library tree imports OK')"
 
       - name: Publish to Forgejo Package Registry
         env:
