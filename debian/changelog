@@ -1,3 +1,12 @@
+martinmunk-avr-controld (0.5.5) stable; urgency=medium
+
+  * requirements: take opalum-receiver 0.1.1 from public PyPI, drop the LAN index
+  * Add MIT licence and public project metadata
+  * Make MQTT/Home Assistant opt-in: no mqtt_host, no broker
+  * Package without a venv: system python3 >= 3.11, GitHub Release workflow
+
+ -- Martin Munk Hansen <hansen@martinmunk.com>  Fri, 06 Nov 2026 01:02:58 +0000
+
 martinmunk-avr-controld (0.5.4) stable; urgency=medium
 
   * backends: reopen the serial port after an I/O failure (rate-limited)
