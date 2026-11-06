@@ -6,12 +6,20 @@
 # tag here, where this workflow builds the same package and attaches it to a
 # GitHub Release. The apt repository at https://martinmunk.github.io/apt picks
 # the asset up from there.
+#
+# "Run workflow" on main with an existing tag in the `tag` input (re)publishes
+# that tag, e.g. after a workflow fix; without a tag it is only a build check.
 name: Release package
 
 on:
   push:
     tags: ["release/*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release/X.Y.Z tag to (re)publish; empty = build check only"
+        required: false
+        default: ""
 
 env:
   DEBIAN_FRONTEND: noninteractive
@@ -23,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: debian:trixie
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - name: Install build tools
         run: |
@@ -30,14 +40,26 @@ jobs:
           apt-get install -y -qq git ca-certificates debhelper python3 python3-pip dpkg-dev fakeroot
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
-      - name: Check the tag matches debian/changelog
-        if: startsWith(github.ref, 'refs/tags/release/')
+      - name: Which tag is being released
+        id: meta
+        shell: bash
         run: |
-          tag="${GITHUB_REF_NAME#release/}"
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ] && [[ "$GITHUB_REF" == refs/tags/release/* ]]; then tag="$GITHUB_REF_NAME"; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "releasing: ${tag:-(none, build check only)}"
+      - name: Check the tag matches debian/changelog
+        if: steps.meta.outputs.tag != ''
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          tag="${{ steps.meta.outputs.tag }}"; tag="${tag#release/}"
           ver="$(dpkg-parsechangelog -S Version)"
           [ "$tag" = "$ver" ] || { echo "tag $tag != changelog $ver"; exit 1; }
       - name: Build
+        shell: bash
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           dpkg-buildpackage -b --no-sign -rfakeroot
@@ -65,27 +87,35 @@ jobs:
           name: deb
           path: dist
       - name: Install and smoke-run the daemon
+        shell: bash
         run: |
+          set -euo pipefail
           apt-get update -qq
           apt-get install -y -qq python3 >/dev/null
           python3 --version
           dpkg -i dist/martinmunk-avr-controld_*.deb || apt-get -y -qq -f install
           python3 -B -c "import sys; sys.path.insert(0, '/opt/avr-controld/lib'); import avrcontrold, nad_receiver, opalum_receiver, paho.mqtt.client, serial, jeepney; print('imports OK')"
           /opt/avr-controld/bin/avr-controld -o backend=demo -o avr_socket=/run/avrd.sock -o poll_interval=1 > /tmp/d.log 2>&1 &
+          pid=$!
           for i in $(seq 1 10); do [ -S /run/avrd.sock ] && break; sleep 0.5; done
           python3 -c "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect('/run/avrd.sock'); s.sendall(b'GET volume\n'); r=s.recv(64); print(r); assert r.startswith(b'OK')"
-          kill -TERM %1; wait %1
+          kill -TERM "$pid"; wait "$pid"
           grep -q 'mqtt=disabled' /tmp/d.log
+          echo "smoke test OK"
 
   release:
     name: GitHub Release
-    needs: verify
-    if: startsWith(github.ref, 'refs/tags/release/')
+    needs: [build, verify]
+    if: needs.build.outputs.tag != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      TAG: ${{ needs.build.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.tag }}
       - uses: actions/download-artifact@v4
         with:
           name: deb
@@ -93,15 +123,19 @@ jobs:
       - name: Release notes from debian/changelog
         run: |
           sudo apt-get install -y -qq dpkg-dev >/dev/null
-          ver="${GITHUB_REF_NAME#release/}"
+          ver="${TAG#release/}"
           { echo "## martinmunk-avr-controld $ver"; echo; dpkg-parsechangelog -S Changes | tail -n +3; echo; echo "Install with \`dpkg -i\`, or through the apt repository: https://martinmunk.github.io/apt"; } > notes.md
           cat notes.md
-      - name: Create the release
+      - name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ver="${GITHUB_REF_NAME#release/}"
-          gh release create "$GITHUB_REF_NAME" --title "martinmunk-avr-controld $ver" --notes-file notes.md dist/*
+          ver="${TAG#release/}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" --clobber dist/*
+          else
+            gh release create "$TAG" --title "martinmunk-avr-controld $ver" --notes-file notes.md dist/*
+          fi
       # Ask the apt repository to rebuild its index now instead of waiting for
       # its schedule. Optional: needs a token with access to martinmunk/apt.
       - name: Notify the apt repository
@@ -111,4 +145,4 @@ jobs:
         run: |
           curl -fsS -X POST -H "Authorization: Bearer $APT_DISPATCH_TOKEN" -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/martinmunk/apt/dispatches \
-            -d '{"event_type":"package-released","client_payload":{"repo":"${{ github.repository }}","tag":"${{ github.ref_name }}"}}'
+            -d "{\"event_type\":\"package-released\",\"client_payload\":{\"repo\":\"${{ github.repository }}\",\"tag\":\"$TAG\"}}"
